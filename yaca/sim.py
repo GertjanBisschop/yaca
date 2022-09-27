@@ -1,11 +1,11 @@
-import collections
-import random
-import math
 import dataclasses
+import itertools
+import math
+import numpy as np
+import random
 import tskit
 
 from typing import List
-from typing import Any
 
 
 @dataclasses.dataclass
@@ -54,8 +54,8 @@ class Lineage:
     @property
     def num_recombination_links(self):
         """
-        The number of positions along this lineage's genome at which a recombination
-        event can occur.
+        The number of positions along this lineage's genome
+        at which a recombination event can occur.
         """
         return self.right - self.left - 1
 
@@ -106,7 +106,7 @@ def draw_event_time(num_lineages, rho, rng, T=0):
     "Raghu Pasupathy, Generating Nonhomogeneous Poisson process".
     """
     u = rng.uniform(0, 1)
-    s -= math.log(u)
+    s = math.log(u)
     return inverse_expectation_function_extended(s, rho / 2, num_lineages, T)
 
 
@@ -126,14 +126,16 @@ def intersect_lineages(a, b):
         elif a.ancestry[i].left > b.ancestry[j].right:
             j += 1
         else:
-            l = max(a.ancestry[i].left, b.ancestry[j].left)
-            r = min(a.ancestry[i].right, b.ancestry[j].right)
+            left = max(a.ancestry[i].left, b.ancestry[j].left)
+            right = min(a.ancestry[i].right, b.ancestry[j].right)
             overlap.append(
                 AncestryInterval(
-                    l, r, a.ancestry[i].ancestral_to + b.ancestry[j].ancestral_to
+                    left,
+                    right,
+                    a.ancestry[i].ancestral_to + b.ancestry[j].ancestral_to
                 )
             )
-            overlap_length += r - l
+            overlap_length += right - left
             if a.ancestry[i].right < b.ancestry[j].right:
                 i += 1
             else:
@@ -142,21 +144,36 @@ def intersect_lineages(a, b):
 
 
 def pick_breakpoints(overlap, total_overlap, rho, T, node_times, seed):
-    rng = np.random.default_rng(seed)
-    overlap_rec_units = total_overlap * rho
-    num_breakpoints = 0
-    # FIX THIS
+    rng = np.random.default_rng(None)
+    # divide rho by 2, num breakpoints for single lineage
+    overlap_rec_units = total_overlap * rho / 2
+    # num_breakpoints = 0
+    breakpoints = np.zeros(0, dtype=np.int64)
     for t in node_times:
         # numpy poisson pass lambda = expected number of events
-        num_breakpoints += rng.poisson((T - t) * overlap_rec_units)
-        breakpoints = np.random.randint(low=1, high=total_overlap, num_breakpoints)
+        num_breakpoints = rng.poisson((T - t) * overlap_rec_units)
+        num_breakpoints = min(num_breakpoints, total_overlap - 1)
+        breakpoints = np.hstack(
+            (
+                breakpoints,
+                rng.choice(
+                    np.arange(1, total_overlap),
+                    num_breakpoints,
+                    replace=False
+                ),
+            )
+        )
 
     # some breakpoints might be identical
     breakpoints = np.unique(breakpoints)
-    # sample breakpoint to define single interval
-    breakpoint_idx = rng.integers(range(len(breakpoints)))
-    left = breakpoints[idx - 1] if idx else 0
-    right = breakpoints[idx]
+    if len(breakpoints) > 0:
+        # sample breakpoint to define single interval
+        idx = rng.integers(len(breakpoints))
+        left = breakpoints[idx - 1] if idx else 0
+        right = breakpoints[idx]
+    else:
+        left = 0
+        right = total_overlap
     return (left, right)
 
 
@@ -187,7 +204,6 @@ def remove_segment(current_lineage, to_remove):
     m = len(to_remove)
     i = j = 0
     left = current_lineage.ancestry[i].left
-    interval_open = True
     while i < n and j < m:
         if current_lineage.ancestry[i].right <= to_remove[j].left:
             yield current_lineage.ancestry[i]
@@ -202,7 +218,10 @@ def remove_segment(current_lineage, to_remove):
             while j < m - 1:
                 left = to_remove[j].right
                 j += 1
-                right = min(to_remove[j].left, current_lineage.ancestry[i].right)
+                right = min(
+                    to_remove[j].left,
+                    current_lineage.ancestry[i].right
+                    )
                 if right == current_lineage.ancestry[i].right:
                     i += 1
                     break
@@ -251,21 +270,24 @@ def reverse_combinadic_map(idx, k=2):
         k -= 1
 
 
-def sample_pairwise_rates(lineages, rng):
+def sample_pairwise_rates(lineages, t, rng):
     # total_overlap_test = 0
     pairwise_rates = np.zeros(math.comb(len(lineages), 2), dtype=np.int64)
     for a, b in itertools.combinations(range(len(lineages)), 2):
         _, overlap_length = intersect_lineages(lineages[a], lineages[b])
         rate = (
             1
-            + (2 * t - (lineages[a].node_time + lineages[b].node_time)) * overlap_length
-        )
+            + (2 * t - (lineages[a].node_time + lineages[b].node_time))
+            * overlap_length
+            )
         pairwise_rates[combinadic_map((a, b))] = rate
         # total_overlap_test += overlap_length
     # assert total_overlap == total_overlap_test, 'total_overlap wrong'
 
     # draw random pair based on rates
-    selected_idx = rng.choices(range(pairwise_rates.size), weights=pairwise_rates)[0]
+    selected_idx = rng.choices(
+        range(pairwise_rates.size), weights=pairwise_rates
+        )[0]
     a, b = reverse_combinadic_map(selected_idx)
     overlap, overlap_length = intersect_lineages(lineages[a], lineages[b])
 
@@ -282,8 +304,9 @@ def sample_rejection(lineages, rng):
     return a, b, overlap, overlap_length
 
 
-def sim_yaca(n, rho, L, seed=None):
+def sim_yaca(n, rho, L, seed=None, rejection=True):
     rng = random.Random(seed)
+    tables = tskit.TableCollection(L)
     tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
     lineages = []
     nodes = []
@@ -296,20 +319,26 @@ def sim_yaca(n, rho, L, seed=None):
 
     while total_overlap > 0:
         # waiting time to next coalescence event
-        mean_time_to_last_event = sum(t - l.node_time for l in lineages) / len(lineages)
+        mean_time_to_last_event = sum(
+            t - lineage.node_time for lineage in lineages
+            ) / len(lineages)
         new_event_time = draw_event_time(
-            k, total_overlap * rho, rng, mean_time_to_last_event
+            len(lineages), total_overlap * rho, rng, mean_time_to_last_event
         )
         t += new_event_time
 
         if rejection:
             a, b, overlap, overlap_length = sample_rejection(lineages, rng)
         else:
-            a, b, overlap, overlap_length = sample_pairwise_rates(lineages, rng)
+            a, b, overlap, overlap_length = sample_pairwise_rates(
+                                                        lineages, t, rng
+                                                        )
 
         # pick breakpoints at rate (new_event_time - lineage.node_time)
         node_times = ()
-        breakpoints = pick_breakpoints(overlap, overlap_length, rho, t, node_times, rng)
+        breakpoints = pick_breakpoints(
+            overlap, overlap_length, rho, t, node_times, seed
+        )
         c = Lineage(len(nodes), [], t)
         for interval in merge_segment(overlap, breakpoints):
             for lineage in lineages[a], lineages[b]:
@@ -323,12 +352,17 @@ def sim_yaca(n, rho, L, seed=None):
             lineage.ancestry = list(remove_segment(lineage, c.ancestry))
 
         # update total_overlap
-        total_overlap -= coalesced_interval_length
+        total_overlap -= overlap_length
 
     assert total_overlap == 0, "total_overlap less than 0!"
-    assert fully_coalesced(lineages, n), "Not all segments are ancestral to n samples."
+    assert fully_coalesced(lineages, n), \
+        "Not all segments are ancestral to n samples."
     for node in nodes:
-        tables.nodes.add_row(flags=node.flags, time=node.time, metadata=node.metadata)
+        tables.nodes.add_row(
+            flags=node.flags,
+            time=node.time,
+            metadata=node.metadata
+            )
     tables.sort()
     # tables.edges.squash()?
-    return ts_table
+    return tables.tree_sequence()

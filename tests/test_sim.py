@@ -1,3 +1,4 @@
+import itertools
 import pytest
 import random
 
@@ -108,7 +109,25 @@ class TestIntersect:
         for test, exp in zip(test_result, expected):
             assert test == exp
 
-    def test_pick_breakpoints(self):
+    def test_pick_breakpoints_zero(self):
+        rng = random.Random(42)
+        T = 10
+        rho = 0.0
+        overlap = [
+            sim.AncestryInterval(11, 15, 4),
+            sim.AncestryInterval(17, 20, 3),
+            sim.AncestryInterval(23, 30, 1),
+        ]
+        total_overlap = sum(e.span for e in overlap)
+        node_times = (0, 0)
+        breakpoints = sim.pick_breakpoints(
+            overlap, total_overlap, rho, T, node_times, rng
+        )
+        assert breakpoints == (0, total_overlap)
+        merged_segment = list(sim.merge_segment(overlap, breakpoints))
+        assert merged_segment == overlap
+
+    def test_pick_breakpoints_too_many(self):
         rng = random.Random(42)
         T = 10
         rho = 1
@@ -122,5 +141,12 @@ class TestIntersect:
         breakpoints = sim.pick_breakpoints(
             overlap, total_overlap, rho, T, node_times, rng
         )
-        print(breakpoints)
-        assert False
+        assert max(breakpoints) < total_overlap
+
+    def test_combinadic_map(self):
+        n = 10
+        for pair in itertools.combinations(range(n), 2):
+            assert (
+                tuple(list(sim.reverse_combinadic_map(sim.combinadic_map(pair)))[::-1])
+                == pair
+            )
