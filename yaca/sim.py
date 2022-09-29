@@ -97,17 +97,20 @@ def inverse_expectation_function_extended(x, rho, k, T):
 
 def draw_event_time(num_lineages, rho, rng, T=0):
     """
-    Given expected coalescence rate (k choose 2)* (2*T*rho),
+    Given expected coalescence rate (k choose 2) + (2*(t-T)*rho),
     draw single random values from the non-homogeneous
     exponential distribution
     rho is the total overlap of all combinations expressed
-    in recombination rate units.
+    in recombination rate units and scaled to 2*Ne generations
     Cinclar Algorithm (3) adapted from
     "Raghu Pasupathy, Generating Nonhomogeneous Poisson process".
     """
-    u = rng.uniform(0, 1)
-    s = math.log(u)
-    return inverse_expectation_function_extended(s, rho / 2, num_lineages, T)
+    if rho == 0:
+        return rng.expovariate(math.comb(num_lineages, 2))
+    else:
+        u = rng.uniform(0, 1)
+        s = math.log(u)
+        return inverse_expectation_function_extended(s, rho / 2, num_lineages, T)
 
 
 def intersect_lineages(a, b):
@@ -130,9 +133,7 @@ def intersect_lineages(a, b):
             right = min(a.ancestry[i].right, b.ancestry[j].right)
             overlap.append(
                 AncestryInterval(
-                    left,
-                    right,
-                    a.ancestry[i].ancestral_to + b.ancestry[j].ancestral_to
+                    left, right, a.ancestry[i].ancestral_to + b.ancestry[j].ancestral_to
                 )
             )
             overlap_length += right - left
@@ -144,6 +145,13 @@ def intersect_lineages(a, b):
 
 
 def pick_breakpoints(overlap, total_overlap, rho, T, node_times, seed):
+    """
+    Returns two breakpoints. These are two integers from range
+    (0, total_overlap). At this point the function is ignorant
+    to any intervals. It only considers the total amount of overlap.
+    If there are no breakpoints, returns (0, total_overlap).
+    """
+
     rng = np.random.default_rng(None)
     # divide rho by 2, num breakpoints for single lineage
     overlap_rec_units = total_overlap * rho / 2
@@ -156,11 +164,7 @@ def pick_breakpoints(overlap, total_overlap, rho, T, node_times, seed):
         breakpoints = np.hstack(
             (
                 breakpoints,
-                rng.choice(
-                    np.arange(1, total_overlap),
-                    num_breakpoints,
-                    replace=False
-                ),
+                rng.choice(np.arange(1, total_overlap), num_breakpoints, replace=False),
             )
         )
 
@@ -178,6 +182,12 @@ def pick_breakpoints(overlap, total_overlap, rho, T, node_times, seed):
 
 
 def merge_segment(overlap, breakpoints):
+    """
+    Given two breakpoints merge_segment keeps track of the length
+    of the intervals traversed and yields the interval(s) starting
+    after an overlap of breakpoints[0] and ending after an
+    overlap of breakpoints[1] has been found.
+    """
     start_break, end_break = breakpoints
     remaining = start_break
 
@@ -200,6 +210,11 @@ def merge_segment(overlap, breakpoints):
 
 
 def remove_segment(current_lineage, to_remove):
+    """
+    Yields the AncestralIntervals of current_lineage minus the
+    intersection with to_remove AncestralIntervals. The latter
+    list of intervals should always be contained within the former.
+    """
     n = len(current_lineage.ancestry)
     m = len(to_remove)
     i = j = 0
@@ -218,10 +233,7 @@ def remove_segment(current_lineage, to_remove):
             while j < m - 1:
                 left = to_remove[j].right
                 j += 1
-                right = min(
-                    to_remove[j].left,
-                    current_lineage.ancestry[i].right
-                    )
+                right = min(to_remove[j].left, current_lineage.ancestry[i].right)
                 if right == current_lineage.ancestry[i].right:
                     i += 1
                     break
@@ -249,15 +261,15 @@ def fully_coalesced(lineages, n):
 
 
 def combinadic_map(sorted_pair):
+    """
+    Maps a pair of indices to a unique integer.
+    """
     return int((sorted_pair[0]) + sorted_pair[1] * (sorted_pair[1] - 1) / 2)
 
 
 def reverse_combinadic_map(idx, k=2):
     """
-    To test this code block.
-    for combo in itertools.combinations(range(10),2):
-    result = tuple(list(reverse_combinadic_map(combinadic_map(combo)))[::-1])
-    assert result== combo, 'fail'
+    Maps a unique index to a unique pair.
     """
     while k > 0:
         i = k - 1
@@ -270,6 +282,14 @@ def reverse_combinadic_map(idx, k=2):
         k -= 1
 
 
+def get_total_overlap(lineages):
+    total_overlap = 0
+    for lin_a, lin_b in itertools.combinations(lineages, 2):
+        _, overlap_length = intersect_lineages(lin_a, lin_b)
+        total_overlap += overlap_length
+    return total_overlap
+
+
 def sample_pairwise_rates(lineages, t, rng):
     # total_overlap_test = 0
     pairwise_rates = np.zeros(math.comb(len(lineages), 2), dtype=np.int64)
@@ -277,17 +297,14 @@ def sample_pairwise_rates(lineages, t, rng):
         _, overlap_length = intersect_lineages(lineages[a], lineages[b])
         rate = (
             1
-            + (2 * t - (lineages[a].node_time + lineages[b].node_time))
-            * overlap_length
-            )
+            + (2 * t - (lineages[a].node_time + lineages[b].node_time)) * overlap_length
+        )
         pairwise_rates[combinadic_map((a, b))] = rate
         # total_overlap_test += overlap_length
     # assert total_overlap == total_overlap_test, 'total_overlap wrong'
 
     # draw random pair based on rates
-    selected_idx = rng.choices(
-        range(pairwise_rates.size), weights=pairwise_rates
-        )[0]
+    selected_idx = rng.choices(range(pairwise_rates.size), weights=pairwise_rates)[0]
     a, b = reverse_combinadic_map(selected_idx)
     overlap, overlap_length = intersect_lineages(lineages[a], lineages[b])
 
@@ -298,7 +315,7 @@ def sample_rejection(lineages, rng):
 
     overlap_length = 0
     while overlap_length == 0:
-        a, b = rng.sample(range(len(lineages), k=2))
+        a, b = rng.sample(range(len(lineages)), k=2)
         overlap, overlap_length = intersect_lineages(lineages[a], lineages[b])
 
     return a, b, overlap, overlap_length
@@ -321,7 +338,7 @@ def sim_yaca(n, rho, L, seed=None, rejection=True):
         # waiting time to next coalescence event
         mean_time_to_last_event = sum(
             t - lineage.node_time for lineage in lineages
-            ) / len(lineages)
+        ) / len(lineages)
         new_event_time = draw_event_time(
             len(lineages), total_overlap * rho, rng, mean_time_to_last_event
         )
@@ -330,39 +347,41 @@ def sim_yaca(n, rho, L, seed=None, rejection=True):
         if rejection:
             a, b, overlap, overlap_length = sample_rejection(lineages, rng)
         else:
-            a, b, overlap, overlap_length = sample_pairwise_rates(
-                                                        lineages, t, rng
-                                                        )
+            a, b, overlap, overlap_length = sample_pairwise_rates(lineages, t, rng)
 
         # pick breakpoints at rate (new_event_time - lineage.node_time)
-        node_times = ()
+        node_times = (lineages[a].node_time, lineages[b].node_time)
         breakpoints = pick_breakpoints(
             overlap, overlap_length, rho, t, node_times, seed
         )
+        print('breakpoints', breakpoints)
+        print('overlap', overlap_length )
         c = Lineage(len(nodes), [], t)
         for interval in merge_segment(overlap, breakpoints):
+            print(interval)
             for lineage in lineages[a], lineages[b]:
                 tables.edges.add_row(
                     interval.left, interval.right, c.node, lineage.node
                 )
 
             c.ancestry.append(interval)
+        nodes.append(Node(time=t))
+        lineages.append(c)
+
         # remove interval from old lineage
-        for lineage in lineages[a], lineages[b]:
-            lineage.ancestry = list(remove_segment(lineage, c.ancestry))
+        for lineage_idx in a, b:
+            updated_ancestry = list(remove_segment(lineages[lineage_idx], c.ancestry))
+            lineages[lineage_idx].ancestry = updated_ancestry
+            if updated_ancestry == 0:
+                del lineages[lineage_idx]
 
         # update total_overlap
-        total_overlap -= overlap_length
+        total_overlap = get_total_overlap(lineages)
 
     assert total_overlap == 0, "total_overlap less than 0!"
-    assert fully_coalesced(lineages, n), \
-        "Not all segments are ancestral to n samples."
+    assert fully_coalesced(lineages, n), "Not all segments are ancestral to n samples."
     for node in nodes:
-        tables.nodes.add_row(
-            flags=node.flags,
-            time=node.time,
-            metadata=node.metadata
-            )
+        tables.nodes.add_row(flags=node.flags, time=node.time, metadata=node.metadata)
     tables.sort()
     # tables.edges.squash()?
     return tables.tree_sequence()

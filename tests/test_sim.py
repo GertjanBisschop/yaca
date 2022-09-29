@@ -32,6 +32,10 @@ class TestIntersect:
         overlap, overlap_length = list(sim.intersect_lineages(a, b))
         assert overlap == exp
         assert overlap_length == sum(el.span for el in exp)
+        # swap a and b
+        overlap, overlap_length = list(sim.intersect_lineages(b, a))
+        assert overlap == exp
+        assert overlap_length == sum(el.span for el in exp)
 
     @pytest.mark.parametrize(
         "breakpoints, exp",
@@ -84,6 +88,13 @@ class TestIntersect:
         result = list(sim.merge_segment(test_intervals, breakpoints))
         assert result == exp
 
+    def test_merge_segment_simple(self):
+        test_intervals = [
+            sim.AncestryInterval(0, 5, 0),
+            ]
+        result = list(sim.merge_segment(test_intervals, [0, 5]))
+        assert result == test_intervals
+
     def test_remove_segment(self):
         lineage = sim.Lineage(
             0,
@@ -108,6 +119,20 @@ class TestIntersect:
         assert len(test_result) == len(expected)
         for test, exp in zip(test_result, expected):
             assert test == exp
+
+    def test_remove_segment_all(self):
+        lineage = sim.Lineage(
+            0,
+            [
+                sim.AncestryInterval(10, 20, 3),
+                sim.AncestryInterval(23, 30, 2),
+                sim.AncestryInterval(35, 50, 1),
+            ],
+            0,
+        )
+        
+        test_result = list(sim.remove_segment(lineage, lineage.ancestry))
+        assert len(test_result) == 0
 
     def test_pick_breakpoints_zero(self):
         rng = random.Random(42)
@@ -150,3 +175,19 @@ class TestIntersect:
                 tuple(list(sim.reverse_combinadic_map(sim.combinadic_map(pair)))[::-1])
                 == pair
             )
+
+class TestSimulate:
+    @pytest.mark.timeout(10)
+    def no_test_basic_coalescent_no_rec(self):
+        ts = sim.sim_yaca(4, L=5, rho=0.0, seed=1)
+        assert ts.num_samples == 4
+        assert ts.sequence_length == 5
+        assert ts.num_trees == 1
+        assert all(tree.num_roots == 1 for tree in ts.trees())
+
+    def no_test_basic_coalescent_no_rec(self):
+        ts = sim.sim_yaca(4, L=100, rho=0.00001, seed=1)
+        assert ts.num_samples == 4
+        assert ts.sequence_length == 100
+        assert ts.num_trees > 1
+        assert all(tree.num_roots == 1 for tree in ts.trees())
