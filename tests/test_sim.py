@@ -197,7 +197,7 @@ class TestIntersect:
             )
 
 class TestSimulate:
-    @pytest.mark.timeout(10)
+    @pytest.mark.timeout(2)
     def test_basic_coalescent_no_rec(self):
         ts = sim.sim_yaca(4, L=5, rho=0.0, seed=1)
         assert ts.num_samples == 4

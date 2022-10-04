@@ -88,6 +88,8 @@ def inverse_expectation_function(x, rho, k):
 
 def inverse_expectation_function_extended(x, rho, k, T):
     """
+    Inverse function of cumulative hazard function.
+
     T is mean time of nodes to last coalescenc event.
     """
     c = k * (k - 1) / 2
@@ -102,12 +104,15 @@ def draw_event_time(num_lineages, rho, rng, T=0):
     exponential distribution
     rho is the total overlap of all combinations expressed
     in recombination rate units and scaled to 2*Ne generations
-    Cinclar Algorithm (3) adapted from
-    "Raghu Pasupathy, Generating Nonhomogeneous Poisson process".
+    
+    Inverse sampling formula for non-homogeneous exponential
+    given rate as described above.
     """
     if rho == 0:
         return rng.expovariate(math.comb(num_lineages, 2))
     else:
+        # draw random value from exponential with rate 1
+        # could be done simpler rng.expovariate(1)
         s = 0
         u = rng.uniform(0, 1)
         s -= math.log(u)
@@ -161,8 +166,7 @@ def pick_breakpoints(overlap, total_overlap, rho, T, node_times, seed):
         # numpy poisson pass lambda = expected number of events
         num_breakpoints = rng.poisson((T - t) * overlap_rec_units)
         num_breakpoints = min(num_breakpoints, total_overlap - 1)
-        print('num_breakpoints:', num_breakpoints)
-        print('total_overlap:', total_overlap)
+    
         breakpoints = np.hstack(
             (
                 breakpoints,
@@ -315,7 +319,6 @@ def sample_pairwise_rates(lineages, t, rng):
     a, b = reverse_combinadic_map(selected_idx)
     overlap, overlap_length = intersect_lineages(lineages[a], lineages[b])
 
-    print(lineages[a], lineages[b], overlap_length)
     return a, b, overlap, overlap_length
 
 
