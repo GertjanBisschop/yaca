@@ -1,9 +1,23 @@
 import itertools
 import pytest
 import random
+import  numpy as np
 
 import yaca.sim as sim
 
+class TestInverseExpectationFunction:
+    def f(self, x, k, rho, T):
+        c = k * (k-1) / 2
+        return c*x + x**2 * rho + 2 * x * T * rho
+
+    def test_inverse(self):
+        k = 4
+        rho = 0.1
+        T = 0.25
+        for _ in range(10):
+            x = random.random()
+            f_x = self.f(x, k, rho, T)
+            assert np.isclose(sim.inverse_expectation_function_extended(f_x, rho, k, T), x)
 
 class TestIntersect:
     def test_intersect_segment(self):

@@ -37,7 +37,7 @@ class Test:
 
     def _run_tests(self):
         all_results = self._get_tests()
-        print(f"Collected {len(all_results)} tests.")
+        print(f"Collected {len(all_results)} test(s).")
         for method in all_results:
             method()
 
@@ -56,33 +56,67 @@ class Test:
     def get_seeds(self, num_replicates, seed=None):
         rng = np.random.default_rng(seed)
         max_seed = 2**16
-        return rng.randint(1, max_seed, size=num_replicates)
+        return rng.integers(1, max_seed, size=num_replicates)
 
+    def run_yaca(self, parameters, n, num_replicates, rejection):
+        seeds = self.get_seeds(num_replicates)
+        for seed in tqdm(seeds):
+            # yield sim.sim_yaca_ind(n, parameters["rho"], parameters["L"], seed=seed, rejection=rejection)
+            yield sim.sim_yaca(n, parameters["rho"], parameters["L"], seed=seed, rejection=rejection)
+    
 
 class TestAnalytical(Test):
 
     def no_test_tbl_n2(self):
-        sample_size = 2
+        n = 2
         parameters = {
-            "rho" : 1e-8,
-            "L" : 1_000_000,
-            "Ne" : 1e4,
+            "rho" :7.5e-4,
+            "L" : 1000,
             }
         num_replicates = 100
 
-        trt, tbl = self.get_marginal_tree_stats(parameters, sample_size, num_replicates)
-        self.verify_marginal_tree_stats(sample_size)
+        for rejection in True, False:
+            print(f"rejection sampling : {rejection}")
+            trt, tbl = self.get_marginal_tree_stats(parameters, n, num_replicates, rejection)
+            self.verify_marginal_tree_stats(trt, tbl, n, rejection)
+
+    def no_test_tbl_n4(self):
+        n = 4
+        parameters = {
+            "rho" :7.5e-4,
+            "L" : 1000,
+            }
+        num_replicates = 100
+
+        for rejection in True, False:
+            print(f"rejection sampling : {rejection}")
+            trt, tbl = self.get_marginal_tree_stats(parameters, n, num_replicates, rejection)
+            self.verify_marginal_tree_stats(trt, tbl, n, rejection)
+
+    def no_test_tbl_n8(self):
+        n = 8
+        parameters = {
+            "rho" :7.5e-4,
+            "L" : 1000,
+            }
+        num_replicates = 500
+
+        for rejection in True, False:
+            print(f"rejection sampling : {rejection}")
+            trt, tbl, t1, tn = self.get_marginal_tree_stats(parameters, n, num_replicates, rejection)
+            self.verify_marginal_tree_stats(trt, tbl, n, rejection, t1, tn)
         
     def no_test_against_msprime(self):
         num_replicates = 1000
-        sample_size = 4
+        sample_size = 8
         ploidy = 1
         n = ploidy * sample_size
         recombination_rate = 1e-8
         rho = 2 * ploidy * recombination_rate * 1e4
-        sequence_length = 100
-
+        sequence_length = 100000
+        check_total = 0
         obs = np.zeros(num_replicates, dtype=np.float64)
+        tn = np.zeros_like(obs)
         for i, ts in tqdm(enumerate(msprime.sim_ancestry(
             samples=sample_size,
             ploidy=ploidy, 
@@ -92,32 +126,44 @@ class TestAnalytical(Test):
             )), 
         total=num_replicates):
             tree = ts.first()
+            check_total += ts.num_trees
             obs[i] = tree.time(tree.root)
+            tn[i] = max(tree.time(u) for u in tree.children(tree.root))
+        tn = obs - tn
         exp = self.sample_marginal_tree_depth(n, num_replicates)
-        self.plot_qq(obs, exp, 'msprime', 'analytical', 'tree_depth')
+        exp_tn = np.random.exponential(scale=1, size=num_replicates)
+        self.plot_qq(obs, exp, 'msprime', 'analytical', 'tree_depth_msp')
+        self.plot_qq(tn, exp_tn, 'msprime', 'analytical', 'tn_msp')
+        print(f'mean num trees: {check_total/num_replicates}')
 
-    def run_yaca(parameters, num_replicates, rejection):
-        seeds = self.get_seeds(num_replicates)
-        for seed in seeds:
-            yield sim.yaca(n, rho, L, seed=seed, rejection=rejection)
-    
-    def get_marginal_tree_stats(num_replicates, rejection):
-        ts_iter = run_yaca(parameters, num_replicates, rejection)
+    def get_marginal_tree_stats(self, parameters, sample_size, num_replicates, rejection):
+        ts_iter = self.run_yaca(parameters, sample_size, num_replicates, rejection)
         # keeping track of total root time and total branch length
         trt = np.zeros(num_replicates, dtype=np.float64) 
         tbl = np.zeros(num_replicates, dtype=np.float64)
+        t1 = np.zeros(num_replicates, dtype=np.float64)
+        tn = np.zeros(num_replicates, dtype=np.float64)
         
+        check_count = 0
         for i, ts in enumerate(ts_iter):
             tree = ts.first()
-            trt[i] tree.time(tree.root)
+            trt[i] = tree.time(tree.root)
             tbl[i] = tree.total_branch_length
+            check_count += ts.num_trees
+            tn[i] = tree.time(tree.root) - max(tree.time(u) for u in tree.children(tree.root))
+            t1[i] = min(tree.time(tree.parent(u)) for u in tree.samples())
+        print(f"Average number of trees: {check_count/num_replicates}")
+        return trt, tbl, t1, tn
 
-        return trt, tbl
-
-    def verify_marginal_tree_stats(trt, tbl, n):
+    def verify_marginal_tree_stats(self, trt, tbl, n, rejection, t1, tn):
+        rejection_str = 'rejection_sampl' if rejection else 'weighted_sampl'
         num_replicates = trt.size
         exp_trt = self.sample_marginal_tree_depth(n, num_replicates)
-        self.plot_qq(obs, exp, 'yaca', 'sum_exp', 'tree_depth')
+        exp_t1 = np.random.exponential(scale=1/math.comb(n, 2), size=num_replicates)
+        exp_tn = np.random.exponential(scale=1, size=num_replicates)
+        self.plot_qq(trt, exp_trt, 'yaca', 'sum_exp', f'tree_depth_n_{n}_'+rejection_str)
+        self.plot_qq(t1, exp_t1, 'yaca', 't1', f't1_n_{n}_'+rejection_str)
+        self.plot_qq(tn, exp_tn, 'yaca', 'tn', f'tn_n_{n}_'+rejection_str)
 
         # hist_ms, bin_edges = np.histogram(tbl_ms, 20, density=True)
         # index = bin_edges[:-1]
@@ -132,6 +178,9 @@ class TestAnalytical(Test):
                 size=num_replicates
                 )
         return result
+
+    def mean_marginal_tree_depth(self, n):
+        return 2 * (1- 1 / n)
 
     def get_analytical_tbl(self, n, t):
         """
@@ -181,7 +230,7 @@ class TestAgainstMsp(Test):
         pyplot.savefig(path)
         pyplot.close("all")
 
-    def test_analytical_num_trees(self):
+    def no_test_analytical_num_trees(self):
         """
         Runs the check for number of trees using the CLI.
         """
@@ -307,6 +356,56 @@ class TestNonHomPoisson(Test):
             )
         return results
 
+class TestFoo(Test):
+    def no_test_foo(self):
+        n = 8
+        parameters = {
+            "rho" :7.5e-4,
+            "L" : 1000,
+            }
+        num_replicates = 10
+        rejection = False
+        max_trees = 0
+        for i, (ts, seed) in enumerate(self.run_yaca(parameters, n, num_replicates, rejection)):
+            print(seed, ts.num_trees)
+            max_trees = max(ts.num_trees, max_trees)
+        print('yaca_max_trees:', max_trees)
+
+    def no_test_against_msprime(self):
+        num_replicates = 100
+        sample_size = 8
+        ploidy = 1
+        n = ploidy * sample_size
+        rho = 7.5e-4 * 2
+        sequence_length = 1000
+        max_trees = 0
+        
+        for i, ts in tqdm(enumerate(msprime.sim_ancestry(
+            samples=sample_size,
+            ploidy=ploidy, 
+            num_replicates=num_replicates,
+            recombination_rate=rho,
+            sequence_length = sequence_length
+            )), 
+        total=num_replicates):
+            max_trees = max(ts.num_trees, max_trees)
+            
+        print('msp:', max_trees)
+
+    def test_foo(self):
+        n = 8
+        parameters = {
+            "rho" :7.5e-4,
+            "L" : 1000,
+            }
+
+        for _ in range(10):
+            seed = random.randint(0, 2**16)
+            print(seed)
+            ts = sim.sim_yaca(n, parameters["rho"], parameters["L"], seed=seed)
+            if ts.num_trees > 50:
+                break
+
 def run_tests(suite, output_dir):
     for cl_name in suite:
         instance = getattr(sys.modules[__name__], cl_name)(output_dir, cl_name)
@@ -319,6 +418,7 @@ def main():
         "TestNonHomPoisson",
         "TestAgainstMsp",
         "TestAnalytical",
+        "TestFoo"
     ]
 
     parser.add_argument(
