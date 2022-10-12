@@ -357,8 +357,7 @@ def sim_yaca(n, rho, L, seed=None, rejection=True):
             a, b, overlap, overlap_length = sample_rejection(lineages, rng)
         else:
             a, b, overlap, overlap_length = sample_pairwise_rates(lineages, t, rng)
-
-        # pick breakpoints at rate (new_event_time - lineage.node_time)
+        
         node_times = (lineages[a].node_time, lineages[b].node_time)
         breakpoints = pick_breakpoints(
             overlap, overlap_length, rho, t, node_times, seed
@@ -369,12 +368,9 @@ def sim_yaca(n, rho, L, seed=None, rejection=True):
                 tables.edges.add_row(
                     interval.left, interval.right, c.node, lineage.node
                 )
-            if interval.ancestral_to < n:
-                c.ancestry.append(interval)
+            c.ancestry.append(interval)
         
         nodes.append(Node(time=t))
-        if len(c.ancestry) > 0:
-            lineages.append(c)
 
         # remove interval from old lineage
         to_delete = []
@@ -385,19 +381,23 @@ def sim_yaca(n, rho, L, seed=None, rejection=True):
                 to_delete.append(lineage_idx)
         for lineage_idx in sorted(to_delete, reverse=True):
             del lineages[lineage_idx]
+        
+        # filter out intervals that are ancestral to all samples 
+        c.ancestry = [segment for segment in c.ancestry if segment.ancestral_to < n]
+        if len(c.ancestry) > 0:
+            lineages.append(c)
 
         # update total_overlap
-        # total_overlap -= update_total_overlap(c.ancestry, n)
         total_overlap = update_total_overlap_brute_force(lineages)
         # check_progress(lineages, total_overlap)
+    
     assert total_overlap == 0, "total_overlap less than 0!"
     assert fully_coalesced(lineages, n), "Not all segments are ancestral to n samples."
-    assert merge_lineages_test(lineages)
 
     for node in nodes:
         tables.nodes.add_row(flags=node.flags, time=node.time, metadata=node.metadata)
     tables.sort()
-    # tables.edges.squash()?
+    tables.edges.squash()
     return tables.tree_sequence()
 
 
@@ -410,7 +410,7 @@ def sample_pairwise_rates_ind(lineages, rng, time_last_event, rho):
         if overlap_length > 0:
             # get node times events
             T = time_last_event - min(lineages[a].node_time, lineages[b].node_time)
-            new_event_time = draw_event_time(num_lineages, rho * overlap_length, rng, T/2)
+            new_event_time = draw_event_time(2, rho * overlap_length, rng, T/2)
             pairwise_times[combinadic_map((a, b))] = new_event_time
         
     # pick pair with smallest new_event_time
@@ -452,8 +452,8 @@ def sim_yaca_ind(n, rho, L, seed=None, rejection=False):
                     interval.left, interval.right, c.node, lineage.node
                 )
             c.ancestry.append(interval)
+        
         nodes.append(Node(time=t))
-        lineages.append(c)
 
         # remove interval from old lineage
         to_delete = []
@@ -464,14 +464,19 @@ def sim_yaca_ind(n, rho, L, seed=None, rejection=False):
                 to_delete.append(lineage_idx)
         for lineage_idx in sorted(to_delete, reverse=True):
             del lineages[lineage_idx]
+        
+        # filter out intervals that are ancestral to all samples 
+        c.ancestry = [segment for segment in c.ancestry if segment.ancestral_to < n]
+        if len(c.ancestry) > 0:
+            lineages.append(c)
 
         # update total_overlap
         # total_overlap -= update_total_overlap(c.ancestry, n)
         total_overlap = update_total_overlap_brute_force(lineages)
+        # check_progress(lineages, total_overlap)
 
     assert total_overlap == 0, "total_overlap less than 0!"
     assert fully_coalesced(lineages, n), "Not all segments are ancestral to n samples."
-    assert merge_lineages_test(lineages)
 
     for node in nodes:
         tables.nodes.add_row(flags=node.flags, time=node.time, metadata=node.metadata)

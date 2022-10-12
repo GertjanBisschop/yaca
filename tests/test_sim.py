@@ -7,6 +7,10 @@ import yaca.sim as sim
 
 class TestInverseExpectationFunction:
     def f(self, x, k, rho, T):
+        """
+        Integral of c + 2*(T+t)*rho over 0 to x
+        T is mean time of nodes to last event.
+        """
         c = k * (k-1) / 2
         return c*x + x**2 * rho + 2 * x * T * rho
 
@@ -213,30 +217,39 @@ class TestIntersect:
 class TestSimulate:
     @pytest.mark.timeout(2)
     def test_basic_coalescent_no_rec(self):
-        ts = sim.sim_yaca(4, L=5, rho=0.0, seed=1)
-        assert ts.num_samples == 4
-        assert ts.sequence_length == 5
+        n = 4
+        sequence_length = 5
+        ts = sim.sim_yaca(n, L=sequence_length, rho=0.0, seed=1)
+        assert ts.num_samples == n
+        assert ts.sequence_length == sequence_length
         assert ts.num_trees == 1
         assert all(tree.num_roots == 1 for tree in ts.trees())
+        assert max(tree.depth(u) for tree in ts.trees() for u in ts.samples()) == n - 1
 
     @pytest.mark.timeout(2)
     def test_basic_coalescent_rec(self):
         seed = 3
-        ts = sim.sim_yaca(4, L=100, rho=1, seed=seed)
-        assert ts.num_samples == 4
+        n = 4
+        ts = sim.sim_yaca(n, L=100, rho=1, seed=seed)
+        assert ts.num_samples == n
         assert ts.sequence_length == 100
         assert ts.num_trees > 1
         assert all(tree.num_roots == 1 for tree in ts.trees())
+        assert max(tree.depth(u) for tree in ts.trees() for u in ts.samples()) == n - 1
 
     @pytest.mark.timeout(2)
     def test_basic_coalescent_rec_pairwise_rates(self):
         seed = 3
-        ts = sim.sim_yaca(4, L=100, rho=1, seed=seed, rejection=False)
-        assert ts.num_samples == 4
+        n = 4
+        ts = sim.sim_yaca(n, L=100, rho=1, seed=seed, rejection=False)
+        assert ts.num_samples == n
         assert ts.sequence_length == 100
         assert ts.num_trees > 1
         assert all(tree.num_roots == 1 for tree in ts.trees())
+        assert max(tree.depth(u) for tree in ts.trees() for u in ts.samples()) == n - 1
 
+    
+class TestAux:
     def test_merge_intervals(self):
         lineage1 = sim.Lineage(
             0,
