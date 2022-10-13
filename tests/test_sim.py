@@ -138,6 +138,32 @@ class TestIntersect:
         for test, exp in zip(test_result, expected):
             assert test == exp
 
+    def test_remove_segment2(self):
+        lineage = sim.Lineage(
+            0,
+            [
+                sim.AncestryInterval(10, 20, 3),
+                sim.AncestryInterval(30, 40, 2),
+                sim.AncestryInterval(50, 60, 1),
+            ],
+            0,
+        )
+        to_remove = [
+            sim.AncestryInterval(11, 15, 4),
+            sim.AncestryInterval(55, 58, 3),
+        ]
+        expected = [
+            sim.AncestryInterval(10, 11, 3),
+            sim.AncestryInterval(15, 20, 3),
+            sim.AncestryInterval(30, 40, 2),
+            sim.AncestryInterval(50, 55, 1),
+            sim.AncestryInterval(58, 60, 1),
+        ]
+        test_result = list(sim.remove_segment(lineage, to_remove))
+        assert len(test_result) == len(expected)
+        for test, exp in zip(test_result, expected):
+            assert test == exp
+
     def test_remove_segment_all(self):
         lineage = sim.Lineage(
             0,

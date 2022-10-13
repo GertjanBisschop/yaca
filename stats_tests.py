@@ -214,7 +214,7 @@ class TestAnalytical(Test):
 class TestAgainstMsp(Test):
 
     def test_num_trees(self):
-        sample_size = 2
+        sample_size = 1
         n = 2 * sample_size
         r = 1e-9
         Ne = 1e4
@@ -349,11 +349,11 @@ class TestNonHomExp(Test):
 
 class TestFoo(Test):
     def no_test_foo(self):
-        n = 8
-        rho = 7.5e-4
-        L = 1000
+        n = 2
+        rho = 1e-4
+        L = 1e4
         num_replicates = 10
-        rejection = False
+        rejection = True
         max_trees = 0
         for i, (ts, seed) in enumerate(self.run_yaca(rho, L, n, num_replicates, rejection)):
             print(seed, ts.num_trees)
@@ -381,19 +381,73 @@ class TestFoo(Test):
             
         print('msp:', max_trees)
 
-    def test_foo(self):
-        n = 8
-        parameters = {
-            "rho" :7.5e-4,
-            "L" : 1000,
-            }
+    def no_test_foo_2(self):
+        n = 2
+        rho = 1e-4
+        L = 5e4
+        print("4Ner * L:", rho * L)
+        reps = 100
+        num_trees = np.zeros(reps, dtype=np.int64)
+        for i in range(reps):
+            seed = random.randint(0, 2**16)
+            ts = sim.sim_yaca(n, rho, L, seed=seed)
+            num_trees[i] = ts.num_trees
+            print(ts.num_trees)
+            if ts.num_trees > 50:
+                print('seed:', seed)
+                break
+        print(reps)
 
+    def no_test_foo_msp(self):
+        n = 2
+        r = 1e-8
+        Ne = 2.5e3
+        rho = 1e-4
+        L = 5e4
+        print((self.msp_num_breakpoints(n, r, Ne, L, 100)))
+
+    def no_test_run_with_seed(self):
+        #expected number of breakpoints: 4*Ne*r*L = 5
+        n = 2
+        rho = 1e-4
+        L = 5e4
+
+        seed = 44883
+        ts = sim.sim_yaca(n, rho, L, seed=seed)
+        print(ts.num_trees)
+        print(list(ts.breakpoints()))
+
+    def msp_num_breakpoints(self, n, r, Ne, L, num_replicates):
+        # IMPORTANT!! We have to use the get_num_breakpoints method
+        # on the simulator as there is a significant drop in the number
+        # of trees if we use the tree sequence. There is a significant
+        # number of common ancestor events that result in a recombination
+        # being undone.
+        num_trees = np.zeros(num_replicates, dtype=np.int64)
+        # ploidy is 2, see msprime.ancestry l374
+        exact_sim = msprime.ancestry._parse_simulate(
+            sample_size=n, recombination_rate=r, Ne=Ne, length=L
+        )
+        for k in tqdm(range(num_replicates), desc='Running msprime'):
+            exact_sim.run()
+            num_trees[k] = exact_sim.num_breakpoints
+            exact_sim.reset()
+        return num_trees
+
+    def no_test_foo_3(self):
+        a = [(0, 2238.0, 1), (37933.0, 37949.0, 1), (40696.0, 40882.0, 1), (49653.0, 50000.0, 1)]
+        a = [sim.AncestryInterval(left, right, ancestral_to) for left, right, ancestral_to in a]
+        b = [(0, 2238.0, 1), (37933.0, 37949.0, 1), (40696.0, 40882.0, 1), (49653.0, 50000.0, 1)]
+        a = [sim.AncestryInterval(left, right, ancestral_to) for left, right, ancestral_to in b]
+        n = 2
+        rho = 1e-4
+        L = 5e4
+        total_overlap = 2787.0
         for _ in range(10):
             seed = random.randint(0, 2**16)
-            print(seed)
-            ts = sim.sim_yaca(n, parameters["rho"], parameters["L"], seed=seed)
-            if ts.num_trees > 50:
-                break
+            left, right = sim.pick_breakpoints(a, total_overlap, rho, 2, (0, 0), seed)
+            print(left, right)
+
 
 def run_tests(suite, output_dir):
     for cl_name in suite:

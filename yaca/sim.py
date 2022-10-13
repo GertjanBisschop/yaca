@@ -162,8 +162,8 @@ def pick_breakpoints(overlap, total_overlap, rho, T, node_times, seed):
     for t in node_times:
         # numpy poisson pass lambda = expected number of events
         num_breakpoints = rng.poisson((T - t) * overlap_rec_units)
-        num_breakpoints = min(num_breakpoints, total_overlap - 1)
-    
+        num_breakpoints = int(min(num_breakpoints, total_overlap - 1))
+
         breakpoints = np.hstack(
             (
                 breakpoints,
@@ -175,7 +175,7 @@ def pick_breakpoints(overlap, total_overlap, rho, T, node_times, seed):
     if num_breakpoints > 0:
         # sample right side of interval
         idx = rng.integers(interval_ends.size)
-        left = interval_ends[idx - 1] if idx else 0
+        left = interval_ends[idx - 1] if idx !=0 else 0
         right = interval_ends[idx]
     else:
         left = 0
@@ -185,7 +185,7 @@ def pick_breakpoints(overlap, total_overlap, rho, T, node_times, seed):
 
 def merge_segment(overlap, breakpoints):
     """
-    Given two breakpoints merge_segment keeps track of the length
+    Given two breakpoints merge_segment: keeps track of the length
     of the intervals traversed and yields the interval(s) starting
     after an overlap of breakpoints[0] and ending after an
     overlap of breakpoints[1] has been found.
@@ -357,7 +357,7 @@ def sim_yaca(n, rho, L, seed=None, rejection=True):
             a, b, overlap, overlap_length = sample_rejection(lineages, rng)
         else:
             a, b, overlap, overlap_length = sample_pairwise_rates(lineages, t, rng)
-        
+        # print("coalescing lineages:", lineages[a].node, lineages[b].node)
         node_times = (lineages[a].node_time, lineages[b].node_time)
         breakpoints = pick_breakpoints(
             overlap, overlap_length, rho, t, node_times, seed
@@ -400,7 +400,8 @@ def sim_yaca(n, rho, L, seed=None, rejection=True):
     tables.edges.squash()
     return tables.tree_sequence()
 
-
+# IGNORE FROM HERE FOR NOW
+# SAMPLING LINEAGES BASED ON FIRST COALESCENCE TIME // EXPERIMENTAL
 def sample_pairwise_rates_ind(lineages, rng, time_last_event, rho):
     # total_overlap_test = 0
     num_lineages = len(lineages)
