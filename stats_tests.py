@@ -53,6 +53,14 @@ class Test:
         plt.savefig(f, dpi=72)
         plt.close("all")
 
+    def plot_histogram(self, x, x_label, filename):
+        n, bins, patches = plt.hist(x, density=True, bins="auto")
+        plt.xlabel(x_label)
+        plt.ylabel("density")
+        f = self._build_filename(filename)
+        plt.savefig(f, dpi=72)
+        plt.close("all")
+
     def get_seeds(self, num_replicates, seed=None):
         rng = np.random.default_rng(seed)
         max_seed = 2**16
@@ -60,52 +68,57 @@ class Test:
 
     def run_yaca(self, rho, L, n, num_replicates, rejection):
         seeds = self.get_seeds(num_replicates)
-        for seed in tqdm(seeds, desc='Running yaca'):
+        for seed in tqdm(seeds, desc="Running yaca"):
             # yield sim.sim_yaca_ind(n, parameters["rho"], parameters["L"], seed=seed, rejection=rejection)
             yield sim.sim_yaca(n, rho, L, seed=seed, rejection=rejection)
-    
+
 
 class TestAnalytical(Test):
-
-    def no_test_tbl_n2(self):
+    def test_tbl_n2(self):
         n = 2
         parameters = {
-            "rho" :7.5e-4,
-            "L" : 1000,
-            }
+            "rho": 7.5e-4,
+            "L": 1000,
+        }
         num_replicates = 100
 
         for rejection in True, False:
             print(f"rejection sampling : {rejection}")
-            trt, tbl, _, _ = self.get_marginal_tree_stats(parameters, n, num_replicates, rejection)
+            trt, tbl, _, _ = self.get_marginal_tree_stats(
+                parameters, n, num_replicates, rejection
+            )
             self.verify_marginal_tree_stats(trt, tbl, n, rejection)
 
-    def no_test_tbl_n4(self):
+    def test_tbl_n4(self):
         n = 4
         parameters = {
-            "rho" :7.5e-4,
-            "L" : 1000,
-            }
+            "rho": 7.5e-4,
+            "L": 1000,
+        }
         num_replicates = 100
 
         for rejection in True, False:
             print(f"rejection sampling : {rejection}")
-            trt, tbl, t1, tn = self.get_marginal_tree_stats(parameters, n, num_replicates, rejection)
+            trt, tbl, t1, tn = self.get_marginal_tree_stats(
+                parameters, n, num_replicates, rejection
+            )
             self.verify_marginal_tree_stats(trt, tbl, n, rejection)
 
-    def no_test_tbl_n8(self):
+    def test_tbl_n8(self):
         n = 8
         parameters = {
-            "rho" :7.5e-4,
-            "L" : 1000,
-            }
+            "rho": 7.5e-4,
+            "L": 1000,
+        }
         num_replicates = 500
 
         for rejection in True, False:
             print(f"rejection sampling : {rejection}")
-            trt, tbl, t1, tn = self.get_marginal_tree_stats(parameters, n, num_replicates, rejection)
+            trt, tbl, t1, tn = self.get_marginal_tree_stats(
+                parameters, n, num_replicates, rejection
+            )
             self.verify_marginal_tree_stats(trt, tbl, n, rejection, t1, tn)
-        
+
     def no_test_against_msprime(self):
         num_replicates = 1000
         sample_size = 8
@@ -117,14 +130,18 @@ class TestAnalytical(Test):
         check_total = 0
         obs = np.zeros(num_replicates, dtype=np.float64)
         tn = np.zeros_like(obs)
-        for i, ts in tqdm(enumerate(msprime.sim_ancestry(
-            samples=sample_size,
-            ploidy=ploidy, 
-            num_replicates=num_replicates,
-            recombination_rate=rho,
-            sequence_length = sequence_length
-            )), 
-        total=num_replicates):
+        for i, ts in tqdm(
+            enumerate(
+                msprime.sim_ancestry(
+                    samples=sample_size,
+                    ploidy=ploidy,
+                    num_replicates=num_replicates,
+                    recombination_rate=rho,
+                    sequence_length=sequence_length,
+                )
+            ),
+            total=num_replicates,
+        ):
             tree = ts.first()
             check_total += ts.num_trees
             obs[i] = tree.time(tree.root)
@@ -132,39 +149,49 @@ class TestAnalytical(Test):
         tn = obs - tn
         exp = self.sample_marginal_tree_depth(n, num_replicates)
         exp_tn = np.random.exponential(scale=1, size=num_replicates)
-        self.plot_qq(obs, exp, 'msprime', 'analytical', 'tree_depth_msp')
-        self.plot_qq(tn, exp_tn, 'msprime', 'analytical', 'tn_msp')
-        print(f'mean num trees: {check_total/num_replicates}')
+        self.plot_qq(obs, exp, "msprime", "analytical", "tree_depth_msp")
+        self.plot_qq(tn, exp_tn, "msprime", "analytical", "tn_msp")
+        print(f"mean num trees: {check_total/num_replicates}")
 
-    def get_marginal_tree_stats(self, parameters, sample_size, num_replicates, rejection):
-        ts_iter = self.run_yaca(parameters['rho'], parameters['L'], sample_size, num_replicates, rejection)
+    def get_marginal_tree_stats(
+        self, parameters, sample_size, num_replicates, rejection
+    ):
+        ts_iter = self.run_yaca(
+            parameters["rho"], parameters["L"], sample_size, num_replicates, rejection
+        )
         # keeping track of total root time and total branch length
-        trt = np.zeros(num_replicates, dtype=np.float64) 
+        trt = np.zeros(num_replicates, dtype=np.float64)
         tbl = np.zeros(num_replicates, dtype=np.float64)
         t1 = np.zeros(num_replicates, dtype=np.float64)
         tn = np.zeros(num_replicates, dtype=np.float64)
-        
+
         check_count = 0
         for i, ts in enumerate(ts_iter):
             tree = ts.first()
             trt[i] = tree.time(tree.root)
             tbl[i] = tree.total_branch_length
             check_count += ts.num_trees
-            tn[i] = tree.time(tree.root) - max(tree.time(u) for u in tree.children(tree.root))
+            tn[i] = tree.time(tree.root) - max(
+                tree.time(u) for u in tree.children(tree.root)
+            )
             t1[i] = min(tree.time(tree.parent(u)) for u in tree.samples())
         print(f"Average number of trees: {check_count/num_replicates}")
         return trt, tbl, t1, tn
 
     def verify_marginal_tree_stats(self, trt, tbl, n, rejection, t1=None, tn=None):
-        rejection_str = 'rejection_sampl' if rejection else 'weighted_sampl'
+        rejection_str = "rejection_sampl" if rejection else "weighted_sampl"
         num_replicates = trt.size
         exp_trt = self.sample_marginal_tree_depth(n, num_replicates)
-        self.plot_qq(trt, exp_trt, 'yaca', 'sum_exp', f'tree_depth_n_{n}_'+rejection_str)
+        self.plot_qq(
+            trt, exp_trt, "yaca", "sum_exp", f"tree_depth_n_{n}_" + rejection_str
+        )
         if isinstance(t1, np.ndarray) and isinstance(tn, np.ndarray):
-            exp_t1 = np.random.exponential(scale=1/math.comb(n, 2), size=num_replicates)
+            exp_t1 = np.random.exponential(
+                scale=1 / math.comb(n, 2), size=num_replicates
+            )
             exp_tn = np.random.exponential(scale=1, size=num_replicates)
-            self.plot_qq(t1, exp_t1, 'yaca', 't1', f't1_n_{n}_'+rejection_str)
-            self.plot_qq(tn, exp_tn, 'yaca', 'tn', f'tn_n_{n}_'+rejection_str)
+            self.plot_qq(t1, exp_t1, "yaca", "t1", f"t1_n_{n}_" + rejection_str)
+            self.plot_qq(tn, exp_tn, "yaca", "tn", f"tn_n_{n}_" + rejection_str)
 
         # hist_ms, bin_edges = np.histogram(tbl_ms, 20, density=True)
         # index = bin_edges[:-1]
@@ -174,14 +201,11 @@ class TestAnalytical(Test):
         result = np.zeros(num_replicates, dtype=np.float64)
         for i in range(n, 1, -1):
             rate = math.comb(i, 2)
-            result += np.random.exponential(
-                scale=1/rate,
-                size=num_replicates
-                )
+            result += np.random.exponential(scale=1 / rate, size=num_replicates)
         return result
 
     def mean_marginal_tree_depth(self, n):
-        return 2 * (1- 1 / n)
+        return 2 * (1 - 1 / n)
 
     def get_analytical_tbl(self, n, t):
         """
@@ -198,7 +222,7 @@ class TestAnalytical(Test):
         L = 5000
         ploidy = 2
         sample_size = 2
-        
+
         rejection = False
         n = ploidy * sample_size
         ts_gen = self.run_yaca(rho, L, n, 1, rejection)
@@ -206,13 +230,51 @@ class TestAnalytical(Test):
 
     def verify_breakpoint_distribution(self, ts, rho, sample_size, L):
         area = [tree.total_branch_length * tree.span for tree in ts.trees()]
-        scipy.stats.probplot(area, dist=scipy.stats.expon(rho/2), plot=plt, fit=False)
+        scipy.stats.probplot(area, dist=scipy.stats.expon(rho / 2), plot=plt, fit=False)
         path = self.output_dir / f"verify_breakpoint_distribution_n{sample_size}.png"
         plt.savefig(path)
         plt.close("all")
 
-class TestAgainstMsp(Test):
 
+class TestRecombination(Test):
+    def generate_intervals(self, L, seed=None):
+        intervals = [0]
+        while intervals[-1] < L:
+            new = random.uniform(1, L / 10)
+            intervals.append(new + intervals[-1])
+        return intervals
+
+    def test_tract_length(self):
+        L = 1e5
+        n = 2
+        rho = 1e-4
+        num_reps = 1000
+        T = 1
+        node_times = (0, 0)
+
+        intervals = self.generate_intervals(L)
+        intervals = [
+            sim.AncestryInterval(left, right, 1)
+            for left, right in zip(intervals[::2], intervals[1::2])
+        ]
+        total_length = sum(interval.span for interval in intervals)
+        tract_lengths = np.zeros(num_reps, dtype=np.float64)
+        seeds = self.get_seeds(num_reps)
+        for i in tqdm(range(num_reps)):
+            tract_lengths[i] = sum(
+                interval.span
+                for interval in sim.pick_segment(
+                    intervals, rho, T, node_times, seeds[i]
+                )
+            )
+
+        # compare against exponential
+        rng = np.random.default_rng()
+        exp = rng.exponential(1 / rho, num_reps)
+        self.plot_qq(tract_lengths, exp, "obs", "exp", f"tract_lengths_qq_n{n}")
+
+
+class TestAgainstMsp(Test):
     def test_num_trees(self):
         sample_size = 1
         n = 2 * sample_size
@@ -244,11 +306,12 @@ class TestAgainstMsp(Test):
         exact_sim = msprime.ancestry._parse_simulate(
             sample_size=n, recombination_rate=r, Ne=Ne, length=L
         )
-        for k in tqdm(range(num_replicates), desc='Running msprime'):
+        for k in tqdm(range(num_replicates), desc="Running msprime"):
             exact_sim.run()
             num_trees[k] = exact_sim.num_breakpoints
             exact_sim.reset()
         return num_trees
+
 
 class TestNonHomExp(Test):
     def test_time_to_first_event_n2(self):
@@ -310,7 +373,7 @@ class TestNonHomExp(Test):
         )
         total_overlap = math.comb(num_lineages, 2) * rho
 
-        #return self.draw_value_non_hom(10_000, total_overlap, num_lineages)
+        # return self.draw_value_non_hom(10_000, total_overlap, num_lineages)
         return self.draw_min_non_hom(10_000, rho, num_lineages)
 
     def draw_value_non_hom(self, reps, rho_overlap, num_lineages):
@@ -324,11 +387,7 @@ class TestNonHomExp(Test):
         rng = random.Random()
         results = np.zeros(reps, dtype=np.float64)
         for i in range(reps):
-            results[i] = sim.draw_event_time(
-                num_lineages,
-                rho_overlap,
-                rng
-            )
+            results[i] = sim.draw_event_time(num_lineages, rho_overlap, rng)
         return results
 
     def draw_min_non_hom(self, reps, rho_overlap, num_lineages):
@@ -337,15 +396,12 @@ class TestNonHomExp(Test):
         for i in range(reps):
             time = np.inf
             for _ in range(math.comb(num_lineages, 2)):
-                temp = sim.draw_event_time(
-                    2,
-                    rho_overlap,
-                    rng
-                )
+                temp = sim.draw_event_time(2, rho_overlap, rng)
                 time = min(time, temp)
             results[i] = time
 
         return results
+
 
 class TestFoo(Test):
     def no_test_foo(self):
@@ -355,59 +411,45 @@ class TestFoo(Test):
         num_replicates = 10
         rejection = True
         max_trees = 0
-        for i, (ts, seed) in enumerate(self.run_yaca(rho, L, n, num_replicates, rejection)):
+        for i, (ts, seed) in enumerate(
+            self.run_yaca(rho, L, n, num_replicates, rejection)
+        ):
             print(seed, ts.num_trees)
             max_trees = max(ts.num_trees, max_trees)
-        print('yaca_max_trees:', max_trees)
+        print("yaca_max_trees:", max_trees)
 
-    def no_test_against_msprime(self):
-        num_replicates = 100
-        sample_size = 8
-        ploidy = 1
-        n = ploidy * sample_size
-        rho = 7.5e-4 * 2
-        sequence_length = 1000
-        max_trees = 0
-        
-        for i, ts in tqdm(enumerate(msprime.sim_ancestry(
-            samples=sample_size,
-            ploidy=ploidy, 
-            num_replicates=num_replicates,
-            recombination_rate=rho,
-            sequence_length = sequence_length
-            )), 
-        total=num_replicates):
-            max_trees = max(ts.num_trees, max_trees)
-            
-        print('msp:', max_trees)
-
-    def no_test_foo_2(self):
+    def test_num_breakpoints(self):
         n = 2
         rho = 1e-4
         L = 5e4
+        Ne = 1e4
+        r = rho / (4 * Ne)
+
         print("4Ner * L:", rho * L)
-        reps = 100
+        reps = 5
         num_trees = np.zeros(reps, dtype=np.int64)
-        for i in range(reps):
-            seed = random.randint(0, 2**16)
+        for i in tqdm(range(reps), "running yaca"):
+            seed = random.randint(1, 2**16)
             ts = sim.sim_yaca(n, rho, L, seed=seed)
+            ts_msp = msprime.sim_ancestry(
+                samples=2,
+                ploidy=1,
+                sequence_length=L,
+                recombination_rate=rho,
+                model="SMC",
+            )
+            # print(ts.draw_text())
+            print(ts_msp.draw_text())
             num_trees[i] = ts.num_trees
-            print(ts.num_trees)
-            if ts.num_trees > 50:
-                print('seed:', seed)
-                break
-        print(reps)
+        num_breakpoints = num_trees - 1
+        self.plot_histogram(num_trees, "num_trees", f"histogram_n{n}")
 
-    def no_test_foo_msp(self):
-        n = 2
-        r = 1e-8
-        Ne = 2.5e3
-        rho = 1e-4
-        L = 5e4
-        print((self.msp_num_breakpoints(n, r, Ne, L, 100)))
+        num_trees_msp = self.msp_num_breakpoints(n, r, Ne, L, reps)
+        self.plot_qq(num_trees, num_trees_msp, "yaca", "msp", f"qq_num_trees_n{n}")
+        self.verify_breakpoint_distribution(num_breakpoints, rho, L)
 
     def no_test_run_with_seed(self):
-        #expected number of breakpoints: 4*Ne*r*L = 5
+        # expected number of breakpoints: 4*Ne*r*L = 5
         n = 2
         rho = 1e-4
         L = 5e4
@@ -428,17 +470,39 @@ class TestFoo(Test):
         exact_sim = msprime.ancestry._parse_simulate(
             sample_size=n, recombination_rate=r, Ne=Ne, length=L
         )
-        for k in tqdm(range(num_replicates), desc='Running msprime'):
+        for k in tqdm(range(num_replicates), desc="Running msprime"):
             exact_sim.run()
             num_trees[k] = exact_sim.num_breakpoints
             exact_sim.reset()
         return num_trees
 
+    def verify_breakpoint_distribution(self, x, rho, L):
+        scipy.stats.probplot(x, dist=scipy.stats.poisson(rho * L), plot=plt)
+        path = self.output_dir / f"num_breakpoints_analytical_qq.png"
+        plt.savefig(path)
+        plt.close("all")
+
     def no_test_foo_3(self):
-        a = [(0, 2238.0, 1), (37933.0, 37949.0, 1), (40696.0, 40882.0, 1), (49653.0, 50000.0, 1)]
-        a = [sim.AncestryInterval(left, right, ancestral_to) for left, right, ancestral_to in a]
-        b = [(0, 2238.0, 1), (37933.0, 37949.0, 1), (40696.0, 40882.0, 1), (49653.0, 50000.0, 1)]
-        a = [sim.AncestryInterval(left, right, ancestral_to) for left, right, ancestral_to in b]
+        a = [
+            (0, 2238.0, 1),
+            (37933.0, 37949.0, 1),
+            (40696.0, 40882.0, 1),
+            (49653.0, 50000.0, 1),
+        ]
+        a = [
+            sim.AncestryInterval(left, right, ancestral_to)
+            for left, right, ancestral_to in a
+        ]
+        b = [
+            (0, 2238.0, 1),
+            (37933.0, 37949.0, 1),
+            (40696.0, 40882.0, 1),
+            (49653.0, 50000.0, 1),
+        ]
+        a = [
+            sim.AncestryInterval(left, right, ancestral_to)
+            for left, right, ancestral_to in b
+        ]
         n = 2
         rho = 1e-4
         L = 5e4
@@ -461,7 +525,8 @@ def main():
         "TestNonHomExp",
         "TestAgainstMsp",
         "TestAnalytical",
-        "TestFoo"
+        "TestFoo",
+        "TestRecombination",
     ]
 
     parser.add_argument(

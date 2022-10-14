@@ -1,9 +1,10 @@
 import itertools
 import pytest
 import random
-import  numpy as np
+import numpy as np
 
 import yaca.sim as sim
+
 
 class TestInverseExpectationFunction:
     def f(self, x, k, rho, T):
@@ -11,8 +12,8 @@ class TestInverseExpectationFunction:
         Integral of c + 2*(T+t)*rho over 0 to x
         T is mean time of nodes to last event.
         """
-        c = k * (k-1) / 2
-        return c*x + x**2 * rho + 2 * x * T * rho
+        c = k * (k - 1) / 2
+        return c * x + x**2 * rho + 2 * x * T * rho
 
     def test_inverse(self):
         k = 4
@@ -21,7 +22,10 @@ class TestInverseExpectationFunction:
         for _ in range(10):
             x = random.random()
             f_x = self.f(x, k, rho, T)
-            assert np.isclose(sim.inverse_expectation_function_extended(f_x, rho, k, T), x)
+            assert np.isclose(
+                sim.inverse_expectation_function_extended(f_x, rho, k, T), x
+            )
+
 
 class TestIntersect:
     def test_intersect_segment(self):
@@ -109,7 +113,7 @@ class TestIntersect:
     def test_merge_segment_simple(self):
         test_intervals = [
             sim.AncestryInterval(0, 5, 0),
-            ]
+        ]
         result = list(sim.merge_segment(test_intervals, [0, 5]))
         assert result == test_intervals
 
@@ -174,7 +178,7 @@ class TestIntersect:
             ],
             0,
         )
-        
+
         test_result = list(sim.remove_segment(lineage, lineage.ancestry))
         assert len(test_result) == 0
 
@@ -183,12 +187,12 @@ class TestIntersect:
             0,
             [
                 sim.AncestryInterval(0, 100, 1),
-                ],
+            ],
             0,
         )
         to_remove = [
             sim.AncestryInterval(18, 62, 2),
-            ]
+        ]
         expected = [
             sim.AncestryInterval(0, 18, 1),
             sim.AncestryInterval(62, 100, 1),
@@ -240,6 +244,7 @@ class TestIntersect:
                 == pair
             )
 
+
 class TestSimulate:
     @pytest.mark.timeout(2)
     def test_basic_coalescent_no_rec(self):
@@ -274,7 +279,7 @@ class TestSimulate:
         assert all(tree.num_roots == 1 for tree in ts.trees())
         assert max(tree.depth(u) for tree in ts.trees() for u in ts.samples()) == n - 1
 
-    
+
 class TestAux:
     def test_merge_intervals(self):
         lineage1 = sim.Lineage(
@@ -294,5 +299,5 @@ class TestAux:
                 sim.AncestryInterval(30, 35, 2),
             ],
             0,
-        )      
+        )
         result = sim.merge_lineages_test((lineage1, lineage2))
