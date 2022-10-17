@@ -59,6 +59,30 @@ class TestIntersect:
         assert overlap == exp
         assert overlap_length == sum(el.span for el in exp)
 
+
+    def test_intersect_segment2(self):
+        edge = random.random()
+        a = sim.Lineage(0, [sim.AncestryInterval(0.0, edge, 0)])
+        b = sim.Lineage(0, [sim.AncestryInterval(edge, 2.0, 0)])
+        overlap, overlap_length = list(sim.intersect_lineages(a, b))
+        assert overlap_length == 0
+        assert len(overlap) == 0
+
+    def test_intersect_segment3(self):
+        edge = 132.65365493568527
+        edge2 = 774.2345
+        a = sim.Lineage(0, [
+                sim.AncestryInterval(0.0, edge, 0),
+                sim.AncestryInterval(edge2, 1000.0, 0)
+                ]
+            )
+        b = sim.Lineage(0, [
+                sim.AncestryInterval(edge, 1000.0, 0)]
+                )
+        overlap, overlap_length = list(sim.intersect_lineages(a, b))
+        assert len(overlap) == 1
+        overlap_length == 1000 - edge2
+
     @pytest.mark.parametrize(
         "breakpoints, exp",
         [
@@ -246,6 +270,7 @@ class TestIntersect:
 
 
 class TestSimulate:
+    @pytest.mark.full_sim
     @pytest.mark.timeout(2)
     def test_basic_coalescent_no_rec(self):
         n = 4
@@ -257,6 +282,7 @@ class TestSimulate:
         assert all(tree.num_roots == 1 for tree in ts.trees())
         assert max(tree.depth(u) for tree in ts.trees() for u in ts.samples()) == n - 1
 
+    @pytest.mark.full_sim
     @pytest.mark.timeout(2)
     def test_basic_coalescent_rec(self):
         seed = 3
@@ -268,6 +294,7 @@ class TestSimulate:
         assert all(tree.num_roots == 1 for tree in ts.trees())
         assert max(tree.depth(u) for tree in ts.trees() for u in ts.samples()) == n - 1
 
+    @pytest.mark.full_sim
     @pytest.mark.timeout(2)
     def test_basic_coalescent_rec_pairwise_rates(self):
         seed = 3

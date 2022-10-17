@@ -7,6 +7,7 @@ import tskit
 
 from typing import List
 
+import sys
 
 @dataclasses.dataclass
 class AncestryInterval:
@@ -129,7 +130,7 @@ def intersect_lineages(a, b):
     while i < n and j < m:
         if a.ancestry[i].right <= b.ancestry[j].left:
             i += 1
-        elif a.ancestry[i].left > b.ancestry[j].right:
+        elif a.ancestry[i].left >= b.ancestry[j].right:
             j += 1
         else:
             left = max(a.ancestry[i].left, b.ancestry[j].left)
@@ -153,7 +154,8 @@ def generate_segments(intervals, rho, T, node_times, rng):
     total_branch_length = sum(T - t for t in node_times)
     
     for interval in intervals:
-        num_breakpoints = rng.poisson(rho / 2 * interval.span * total_branch_length)
+        expected_num_breakpoints = rho / 2 * interval.span * total_branch_length
+        num_breakpoints = rng.poisson(expected_num_breakpoints)
         if num_breakpoints == 0:
             temp.append(interval)
         else:
@@ -162,6 +164,7 @@ def generate_segments(intervals, rho, T, node_times, rng):
             left = interval.left
             for bp in breakpoints:
                 right = bp
+                assert left < right, 'interval edges not strictly ascending.'
                 temp.append(AncestryInterval(left, right, interval.ancestral_to))
                 split_intervals.append(temp)
                 temp = []
@@ -173,8 +176,7 @@ def generate_segments(intervals, rho, T, node_times, rng):
     return split_intervals
 
 
-def pick_segment(intervals, rho, T, node_times, seed):
-    rng = np.random.default_rng(seed)
+def pick_segment(intervals, rho, T, node_times, rng):
     all_segments = generate_segments(intervals, rho, T, node_times, rng)
     idx = rng.integers(len(all_segments))
     return all_segments[idx]
@@ -187,7 +189,7 @@ def pick_breakpoints(overlap, total_overlap, rho, T, node_times, seed):
     drawn based on the rate of recombination.
     If there are no breakpoints, returns (0, total_overlap).
     """
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(seed) # this is wrong!! rng should be passed instead
     # divide rho by 2, num breakpoints for single lineage
     overlap_rec_units = total_overlap * rho / 2
     breakpoints = np.zeros(0, dtype=np.int64)
@@ -329,7 +331,7 @@ def update_total_overlap_brute_force(lineages):
     return total
 
 
-def sample_pairwise_rates(lineages, t, rng):
+def sample_pairwise_rates(lineages, t, rho, rng):
     # total_overlap_test = 0
     pairwise_rates = np.zeros(math.comb(len(lineages), 2), dtype=np.float64)
     for a, b in itertools.combinations(range(len(lineages)), 2):
@@ -337,7 +339,7 @@ def sample_pairwise_rates(lineages, t, rng):
         overlapping = int(overlap_length > 0)
         rate = (
             1
-            + (2 * t - (lineages[a].node_time + lineages[b].node_time)) * overlap_length
+            + (2 * t - (lineages[a].node_time + lineages[b].node_time)) * overlap_length * rho / 2
         ) * overlapping
         pairwise_rates[combinadic_map((a, b))] = rate
 
@@ -362,8 +364,9 @@ def sample_rejection(lineages, rng):
     return a, b, overlap, overlap_length
 
 
-def sim_yaca(n, rho, L, seed=None, rejection=True):
+def sim_yaca(n, rho, L, seed=None, rejection=True, verbose=False):
     rng = random.Random(seed)
+    rng_numpy = np.random.default_rng(seed)
     tables = tskit.TableCollection(L)
     tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
     lineages = []
@@ -375,7 +378,8 @@ def sim_yaca(n, rho, L, seed=None, rejection=True):
         lineages.append(Lineage(len(nodes), [AncestryInterval(0, L, 1)], t))
         nodes.append(Node(time=0, flags=tskit.NODE_IS_SAMPLE))
 
-    # check_progress(lineages, total_overlap)
+    if verbose:
+        check_progress(lineages, total_overlap)
 
     while total_overlap > 0:
         # waiting time to next coalescence event
@@ -390,13 +394,14 @@ def sim_yaca(n, rho, L, seed=None, rejection=True):
         if rejection:
             a, b, overlap, overlap_length = sample_rejection(lineages, rng)
         else:
-            a, b, overlap, overlap_length = sample_pairwise_rates(lineages, t, rng)
+            a, b, overlap, overlap_length = sample_pairwise_rates(lineages, t, rho, rng)
 
-        # print("coalescing lineages:", lineages[a].node, lineages[b].node)
+        if verbose:
+            print("coalescing lineages:", lineages[a].node, lineages[b].node)
         node_times = (lineages[a].node_time, lineages[b].node_time)
-        coalesced_segment = pick_segment(overlap, rho, t, node_times, seed)
+        coalesced_segment = pick_segment(overlap, rho, t, node_times, rng_numpy)
         c = Lineage(len(nodes), coalesced_segment, t)
-        for interval in merge_segment(overlap, breakpoints):
+        for interval in coalesced_segment:
             for lineage in lineages[a], lineages[b]:
                 tables.edges.add_row(
                     interval.left, interval.right, c.node, lineage.node
@@ -421,9 +426,12 @@ def sim_yaca(n, rho, L, seed=None, rejection=True):
 
         # update total_overlap
         total_overlap = update_total_overlap_brute_force(lineages)
-        # check_progress(lineages, total_overlap)
+        if verbose:
+            check_progress(lineages, total_overlap)
 
     assert total_overlap == 0, "total_overlap less than 0!"
+    if len(lineages)>0:
+        print(seed)
     assert len(lineages) == 0, "Not all segments are ancestral to n samples."
 
     for node in nodes:
