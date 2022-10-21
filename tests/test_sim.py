@@ -4,6 +4,7 @@ import random
 import numpy as np
 
 import yaca.sim as sim
+import yaca.sim_hudson as simh
 
 
 class TestInverseExpectationFunction:
@@ -59,7 +60,6 @@ class TestIntersect:
         assert overlap == exp
         assert overlap_length == sum(el.span for el in exp)
 
-
     def test_intersect_segment2(self):
         edge = random.random()
         a = sim.Lineage(0, [sim.AncestryInterval(0.0, edge, 0)])
@@ -71,14 +71,14 @@ class TestIntersect:
     def test_intersect_segment3(self):
         edge = 132.65365493568527
         edge2 = 774.2345
-        a = sim.Lineage(0, [
+        a = sim.Lineage(
+            0,
+            [
                 sim.AncestryInterval(0.0, edge, 0),
-                sim.AncestryInterval(edge2, 1000.0, 0)
-                ]
-            )
-        b = sim.Lineage(0, [
-                sim.AncestryInterval(edge, 1000.0, 0)]
-                )
+                sim.AncestryInterval(edge2, 1000.0, 0),
+            ],
+        )
+        b = sim.Lineage(0, [sim.AncestryInterval(edge, 1000.0, 0)])
         overlap, overlap_length = list(sim.intersect_lineages(a, b))
         assert len(overlap) == 1
         overlap_length == 1000 - edge2
@@ -328,3 +328,36 @@ class TestAux:
             0,
         )
         result = sim.merge_lineages_test((lineage1, lineage2))
+
+
+@pytest.mark.hudson
+class TestSimHudson:
+    @pytest.mark.full_sim
+    def test_time_to_next_event(self):
+        for _ in range(100):
+            rng = random.Random()
+            n = 4
+            rho = 1e-4
+            sequence_length = 10_000
+            lineages = [
+                self.generate_lineage(sequence_length, i, rng) for i in range(n)
+            ]
+
+            t, _, _ = simh.time_to_next_coalescent_event(lineages, rho, 0)
+            assert t > 0
+            assert False
+
+    def generate_ancestry(self, L, rng):
+        intervals = [0]
+        while intervals[-1] < L:
+            new = rng.uniform(1, L / 10)
+            intervals.append(new + intervals[-1])
+        return [
+            sim.AncestryInterval(left, right, 1)
+            for left, right in zip(intervals[::2], intervals[1::2])
+        ]
+
+    def generate_lineage(self, L, i, rng):
+        ancestry = self.generate_ancestry(L, rng)
+        node_time = rng.random()
+        return sim.Lineage(i, ancestry, node_time)

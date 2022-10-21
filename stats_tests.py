@@ -1,6 +1,6 @@
 import argparse
 import inspect
-
+import itertools
 import msprime
 import numpy as np
 import random
@@ -17,6 +17,7 @@ matplotlib.use("Agg")
 import statsmodels.api as sm
 
 from yaca import sim
+from yaca import sim_hudson as simh
 
 
 class Test:
@@ -78,7 +79,11 @@ class Test:
             )
 
 
-class TestAnalytical(Test):
+class TestMargTBL(Test):
+    """
+    Test marginal total branch length
+    """
+
     def test_tbl(self):
         rho = 7.5e-4
         L = 1000
@@ -216,6 +221,11 @@ class TestAnalytical(Test):
 
 
 class TestRecombination(Test):
+    """
+    Test code that deals with recombination
+
+    """
+
     def generate_intervals(self, L, seed=None):
         intervals = [0]
         while intervals[-1] < L:
@@ -223,7 +233,13 @@ class TestRecombination(Test):
             intervals.append(new + intervals[-1])
         return intervals
 
-    def no_test_tract_length(self):
+    def no_test_pick_segment_function(self):
+        """
+        Generate intervals and split intervals randomly
+        given recombination rate and verify whether the
+        length of the resulting random segment follows
+        the correct distribution
+        """
         L = 1e5
         n = 2
         rho = 1e-4
@@ -253,7 +269,8 @@ class TestRecombination(Test):
             tract_lengths, exp, "obs", "exp", f"tract_lengths_pick_segments_qq_n{n}"
         )
 
-    def test_tract_length2(self):
+    def no_test_pick_segment_function2(self):
+        "node times of both lineages differ"
         L = 1e5
         n = 2
         rho = 5e-4
@@ -286,93 +303,136 @@ class TestRecombination(Test):
             f"tract_lengths_pick_segments_diff_node_times_qq_n{n}",
         )
 
-    def no_test_breakpoint_distribution(self):
+    def test_marginal_tree_span_distribution(self):
+        """
+        Test span of first marginal tree.
+
+        """
         rho = 5e-4
-        L = 50000
-        n = 2
-        reps = 100
-
-        for rejection in False, True:
-            rejection_str = "rejection" if rejection else "weighted"
-            span_distribution = np.zeros(reps, dtype=np.float64)
-            ts_gen = self.run_yaca(rho, L, n, reps, rejection)
-            for i, ts in enumerate(ts_gen):
-                span_distribution[i] = ts.first().span
-
-            rng = np.random.default_rng()
-            exp = rng.exponential(1 / rho, reps)
-            self.plot_qq(
-                span_distribution,
-                exp,
-                "yaca",
-                "exp",
-                f"tract_length_first_tree_qq_n{n}_{rejection_str}",
-            )
-
-    def no_test_breakpoint_distribution2(self):
-        rho = 7.5e-4
-        L = 5000
+        L = 1e5
+        n = 4
+        expectation = False
         rejection = False
-        n = 2
-        ts_gen = self.run_yaca(rho, L, n, 1, rejection)
-        self.verify_breakpoint_distribution(next(ts_gen), rho, n, L)
-
-    def verify_breakpoint_distribution(self, ts, rho, sample_size, L):
-        area = [tree.total_branch_length * tree.span for tree in ts.trees()]
-
-        scipy.stats.probplot(area, dist=scipy.stats.expon(rho / 2), plot=plt, fit=True)
-        path = self.output_dir / f"verify_breakpoint_distribution_n{sample_size}.png"
-        plt.savefig(path)
-        plt.close("all")
-
-    # use collapsed gibbss sampler to sample from compound distribution;
-    # p(d) = Integrate[p(d|T)* p(T) dT, {T, 0, inf}]
-
-
-class TestTimeToNextCoalescence(Test):
-    def generate_ancestry(self, L, rng):
-        intervals = [0]
-        while intervals[-1] < L:
-            new = rng.uniform(1, L / 10)
-            intervals.append(new + intervals[-1])
-        return [
-            sim.AncestryInterval(left, right, 1)
-            for left, right in zip(intervals[::2], intervals[1::2])
-        ]
-
-    def generate_lineage(self, L, i, rng):
-        ancestry = self.generate_ancestry(L, rng)
-        node_time = rng.random()
-        return sim.Lineage(i, ancestry, node_time)
-
-    def test_time_to_next_event(self):
-        rng = random.Random()
-        rho = 7.5e-4
-        L = 5000
-        sample_size = 8
-        total_overlap = 0
-        while total_overlap == 0:
-            lineages = [self.generate_lineage(L, i, rng) for i in range(sample_size)]
-            total_overlap = update_total_overlap_brute_force(lineages)
-
-        # simulate single step for both yaca and CWR for this set of intervals
-        new_event_time = sim.draw_event_time(
-            len(lineages), total_overlap * rho, rng, mean_time_to_last_event
+        num_reps = 500
+        rng = np.random.default_rng()
+        tree_span_exp = self.sample_tree_span(n, rho, rng, num_reps)
+        tree_span_yaca, tree_span_yaca_exp, num_trees_yaca = self.sample_tree_span_yaca(
+            n, rho, L, num_reps, rejection, expectation
         )
 
-        # for CWR:
+        # self.plot_qq(
+        #    tree_span_yaca, tree_span_yaca_exp, "yaca", "exp", "marginal_tree_span_yaca_yaca_exp"
+        # )
+        # self.plot_qq(
+        #    tree_span_yaca_exp, tree_span_exp, "yaca", "exp", "marginal_tree_span_yaca_exp_exp"
+        # )
+        # self.plot_qq(
+        #    tree_span_yaca, tree_span_exp, "yaca", "exp", "marginal_tree_span_yaca_exp"
+        # )
+        tree_span_hudson, num_trees_hudson = self.sample_tree_span_sim(
+            n, rho, L, num_reps
+        )
+        # self.plot_qq(tree_span_exp, tree_span_hudson, 'exp', 'hudson', 'marginal_tree_span_exp_hudson')
+        self.plot_qq(
+            tree_span_yaca,
+            tree_span_hudson,
+            "yaca",
+            "hudson",
+            "marginal_tree_span_yaca_hudson",
+        )
+        self.plot_qq(
+            num_trees_yaca, num_trees_hudson, "yaca", "hudson", "num_trees_yaca_hudson"
+        )
+
+    def test_msp_msp_exact(self):
+        rho = 5e-4
+        L = 1e5
+        n = 4
+        num_reps = 1000
+
+        num_trees_msp = self.sample_num_trees_msprime(n, rho, L, num_reps)
+
+        _, num_trees_exact = self.sample_tree_span_sim(n, rho, L, num_reps)
+        self.plot_qq(
+            num_trees_msp, num_trees_exact, "smc", "hudson", "num_trees_hudson_smc"
+        )
+
+    def sample_total_branch_length(self, n, rng, num_replicates):
+        result = np.zeros(num_replicates, dtype=np.float64)
+        for i in range(n, 1, -1):
+            rate = (i - 1) / 2
+            result += rng.exponential(scale=1 / rate, size=num_replicates)
+        return result
+
+    def sample_tree_span(self, n, rho, rng, num_reps):
+        tbl = self.sample_total_branch_length(n, rng, num_reps)
+        rates = tbl * rho / 2
+        return rng.exponential(scale=1 / rates)
+
+    def sample_tree_span_yaca(self, n, rho, L, num_reps, rejection, expectation):
+        tss = self.run_yaca(rho, L, n, num_reps, rejection, expectation)
+        results = np.zeros((3, num_reps), dtype=np.float64)
+        for i, ts in enumerate(tss):
+            results[0, i] = ts.first().span
+            rate = ts.first().total_branch_length * rho / 2
+            results[1, i] = np.random.exponential(1 / rate)
+            results[1, i] = np.clip(results[1, i], 0, L)
+            results[2, i] = ts.num_trees
+        return results
+
+    def sample_tree_span_sim(self, n, rho, L, num_reps):
+        simulator = msprime.ancestry._parse_sim_ancestry(
+            samples=n,
+            sequence_length=L,
+            recombination_rate=rho / 2,
+            ploidy=1,
+            discrete_genome=False,
+            population_size=1,
+        )
+        results = np.zeros((2, num_reps), dtype=np.float64)
+        for i in tqdm(range(num_reps)):
+            simulator.run()
+            breakpoints = simulator.breakpoints
+            if len(breakpoints) > 0:
+                results[0, i] = float(breakpoints[0])
+            else:
+                results[0, i] = float(L)
+            results[1, i] = simulator.num_breakpoints + 1
+            simulator.reset()
+        return results
+
+    def sample_num_trees_msprime(self, n, rho, L, num_reps):
+        tss = msprime.sim_ancestry(
+            samples=n,
+            sequence_length=L,
+            recombination_rate=rho / 2,
+            ploidy=1,
+            discrete_genome=False,
+            population_size=1,
+            num_replicates=num_reps,
+            model="smc",
+        )
+        results = np.zeros(num_reps, dtype=np.float64)
+        for i, ts in tqdm(enumerate(tss), total=num_reps):
+            results[i] = ts.num_trees
+        return results
 
 
 class TestRecAgainstMsp(Test):
-    def no_test_num_trees(self):
-        n = 2
-        L = 1e4
-        rho = 1e-4
-        num_replicates = 500
+    """
+    Test number of trees against msprime
+
+    """
+
+    def test_num_trees(self):
+        rho = 5e-4
+        L = 1e5
+        n = 4
+        num_reps = 1000
 
         # num_trees_yaca = self.yaca_num_trees(n, rho, L, num_replicates, False)
-        num_trees_msp_exact = self.msp_exact_num_trees(n, rho / 2, L, num_replicates)
-        num_trees_msp = self.msp_num_trees(n, rho, L, num_replicates, ploidy=1)
+        num_trees_msp_exact = self.msp_exact_num_trees(n, rho / 2, L, num_reps)
+        num_trees_msp = self.msp_num_trees(n, rho, L, num_reps, ploidy=1)
         self.plot_qq(
             num_trees_msp,
             num_trees_msp_exact,
@@ -382,7 +442,7 @@ class TestRecAgainstMsp(Test):
         )
         # self.plot_qq(num_trees_yaca, num_trees_msp, "yaca", "msp", f"num_trees_n{n}")
 
-    def test_num_trees_yaca(self):
+    def no_test_num_trees_yaca(self):
         n = 2
         L = 5e4
         rho = 1e-4
@@ -504,7 +564,11 @@ class TestVisualize(Test):
                 print(ts_msp.draw_text())
 
 
-class TestNonHomExp(Test):
+class TestWaitingTimesSimple(Test):
+    """
+    Test distribution of waiting times against msp
+    """
+
     def test_time_to_first_event_n2(self):
         sim_reps = 1000
         parameters = {
@@ -592,6 +656,93 @@ class TestNonHomExp(Test):
             results[i] = time
 
         return results
+
+
+class TestWaitingTimes(Test):
+    """
+    Test distribution of waiting times against modified hudson algorithm
+    """
+
+    def test_waiting_times(self):
+        n = [12, 20, 50]
+        fixed_time = [0.0, None]
+        # what kind of prior to expect here
+        # on lineage node times
+        time_distribution = None
+
+        for combo in itertools.product(fixed_time, n):
+            self.compare_waiting_time_distributions(*combo)
+
+    def compare_waiting_time_distributions(self, fixed_time, n):
+        rng = random.Random()
+        rho = 1e-4
+        sequence_length = 10_000
+        expectation = True
+        num_reps = 1000
+
+        # generate_segments
+        start_lineages = [
+            self.generate_lineage(sequence_length, i, rng, fixed_time) for i in range(n)
+        ]
+        time_last_event = max(lineage.node_time for lineage in start_lineages)
+
+        # draw bunch of waiting times
+        waiting_times_hudson = np.zeros(num_reps, dtype=np.float64)
+        for i in tqdm(range(num_reps), desc="running hudson ..."):
+            lineages = start_lineages[:]
+            t, _, _ = simh.time_to_next_coalescent_event(lineages, rho, time_last_event)
+            waiting_times_hudson[i] = t
+
+        waiting_times_yaca = np.zeros_like(waiting_times_hudson)
+
+        mean_time_to_last_event = (
+            sum(time_last_event - lin.node_time for lin in lineages) / n
+        )
+        total_overlap = sim.update_total_overlap_brute_force(lineages)
+        re_rate = total_overlap * rho
+
+        for i in tqdm(range(num_reps), desc="running yaca ..."):
+            waiting_times_yaca[i] = self.sample_waiting_time_yaca_expectation(
+                n, re_rate, rng, mean_time_to_last_event
+            )
+        waiting_times_yaca += time_last_event
+
+        plot_str = "start" if fixed_time != None else "mid_run"
+        self.plot_qq(
+            waiting_times_yaca,
+            waiting_times_hudson,
+            "yaca",
+            "hudson",
+            f"time_to_next_coalescence_{plot_str}_n{n}_qq",
+        )
+
+    def sample_waiting_time_yaca_expectation(
+        self, n, re_rate, rng, mean_time_to_last_event
+    ):
+        return sim.draw_event_time(n, re_rate, rng, mean_time_to_last_event)
+
+    def sample_waiting_time_yaca_pairwise(self, rho, lineages, rng, T):
+        _, _, _, _, t = sim.sample_pairwise_times(lineages, rng, T, rho)
+        return t + T
+
+    def generate_ancestry(self, L, rng):
+        intervals = [0]
+        while intervals[-1] < L:
+            new = rng.uniform(1, L / 10)
+            intervals.append(new + intervals[-1])
+        return [
+            sim.AncestryInterval(left, right, 1)
+            for left, right in zip(intervals[::2], intervals[1::2])
+        ]
+
+    def generate_lineage(self, L, i, rng, fixed_time=None):
+        ancestry = self.generate_ancestry(L, rng)
+        # how much variance do we want to add to the node times?
+        if fixed_time != None:
+            node_time = fixed_time
+        else:
+            node_time = rng.random()
+        return sim.Lineage(i, ancestry, node_time)
 
 
 class TestFoo(Test):
@@ -713,13 +864,14 @@ def run_tests(suite, output_dir):
 def main():
     parser = argparse.ArgumentParser()
     choices = [
-        "TestNonHomExp",
-        "TestRecAgainstMsp",
-        "TestAnalytical",
-        "TestFoo",
+        "TestMargTBL",
         "TestRecombination",
+        "TestRecAgainstMsp",
+        "TestWaitingTimesSimple",
+        "TestWaitingTimes",
         "TestVisualize",
         "TestAgainstSmc",
+        "TestFoo",
     ]
 
     parser.add_argument(

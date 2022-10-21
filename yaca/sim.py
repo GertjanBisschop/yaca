@@ -54,6 +54,10 @@ class Lineage:
         return s + "]"
 
     @property
+    def hull(self):
+        return self.right - self.left
+
+    @property
     def num_recombination_links(self):
         """
         The number of positions along this lineage's genome
@@ -74,6 +78,26 @@ class Lineage:
         Returns the rightmost position of ancestral material.
         """
         return self.ancestry[-1].right
+
+    def split(self, breakpoint, t):
+        """
+        Splits the ancestral material for this lineage at the specified
+        breakpoint, and returns a second lineage with the ancestral
+        material to the right.
+        """
+        left_ancestry = []
+        right_ancestry = []
+        for interval in self.ancestry:
+            if interval.right <= breakpoint:
+                left_ancestry.append(interval)
+            elif interval.left >= breakpoint:
+                right_ancestry.append(interval)
+            else:
+                assert interval.left < breakpoint < interval.right
+                left_ancestry.append(dataclasses.replace(interval, right=breakpoint))
+                right_ancestry.append(dataclasses.replace(interval, left=breakpoint))
+        self.ancestry = left_ancestry
+        return Lineage(self.node, right_ancestry, t)
 
 
 @dataclasses.dataclass
@@ -101,14 +125,15 @@ def inverse_expectation_function_extended(x, rho, k, T):
 
 def draw_event_time(num_lineages, rho, rng, T=0):
     """
-    Given expected coalescence rate (k choose 2) + (2*(t-T)*rho),
-    draw single random values from the non-homogeneous
+    Given expected coalescence rate (k choose 2) + (2*(t + T)*rho),
+    draw single random value t from the non-homogeneous
     exponential distribution
     rho is the total overlap of all combinations expressed
-    in recombination rate units and scaled to 2*Ne generations
+    in recombination rate units.
 
     Inverse sampling formula for non-homogeneous exponential
     given rate as described above.
+    T is the (mean) time to the last coalescence event.
     """
     if rho == 0.0:
         return rng.expovariate(math.comb(num_lineages, 2))
@@ -157,7 +182,7 @@ def generate_segments(intervals, rho, T, node_times, rng):
     for interval in intervals:
         expected_num_breakpoints = rho / 2 * interval.span * total_branch_length
         num_breakpoints = rng.poisson(expected_num_breakpoints)
-        if num_breakpoints == 0:
+        if num_breakpoints == 0:  # if else clause not needed here
             temp.append(interval)
         else:
             breakpoints = interval.span * rng.random(num_breakpoints) + interval.left
@@ -181,71 +206,6 @@ def pick_segment(intervals, rho, T, node_times, rng):
     all_segments = generate_segments(intervals, rho, T, node_times, rng)
     idx = rng.integers(len(all_segments))
     return all_segments[idx]
-
-
-def pick_breakpoints(overlap, total_overlap, rho, T, node_times, seed):
-    """
-    Returns two breakpoints defining one of the maximum possible
-    n + m + 1 intervals given the n + m breakpoints that are
-    drawn based on the rate of recombination.
-    If there are no breakpoints, returns (0, total_overlap).
-    """
-    rng = np.random.default_rng(seed)  # this is wrong!! rng should be passed instead
-    # divide rho by 2, num breakpoints for single lineage
-    overlap_rec_units = total_overlap * rho / 2
-    breakpoints = np.zeros(0, dtype=np.int64)
-
-    for t in node_times:
-        # numpy poisson pass lambda = expected number of events
-        num_breakpoints = rng.poisson((T - t) * overlap_rec_units)
-        num_breakpoints = int(min(num_breakpoints, total_overlap - 1))
-
-        breakpoints = np.hstack(
-            (
-                breakpoints,
-                rng.choice(np.arange(1, total_overlap), num_breakpoints, replace=False),
-            )
-        )
-    # some breakpoints might be identical
-    interval_ends = np.hstack((np.unique(breakpoints), total_overlap))
-    if num_breakpoints > 0:
-        # sample right side of interval
-        idx = rng.integers(interval_ends.size)
-        left = interval_ends[idx - 1] if idx != 0 else 0
-        right = interval_ends[idx]
-    else:
-        left = 0
-        right = total_overlap
-    return (left, right)
-
-
-def merge_segment(overlap, breakpoints):
-    """
-    Given two breakpoints merge_segment: keeps track of the length
-    of the intervals traversed and yields the interval(s) starting
-    after an overlap of breakpoints[0] and ending after an
-    overlap of breakpoints[1] has been found.
-    """
-    start_break, end_break = breakpoints
-    remaining = start_break
-    i = 0
-
-    while remaining > overlap[i].span:
-        remaining -= overlap[i].span
-        i += 1
-
-    left = overlap[i].left + remaining
-    remaining = end_break - start_break
-    span = overlap[i].right - left
-    while remaining > span:
-        if left != overlap[i].right:
-            yield AncestryInterval(left, overlap[i].right, overlap[i].ancestral_to)
-        remaining -= span
-        i += 1
-        left = overlap[i].left
-        span = overlap[i].span
-
-    yield AncestryInterval(left, left + remaining, overlap[i].ancestral_to)
 
 
 def remove_segment(current_lineage, to_remove):
@@ -363,8 +323,7 @@ def sample_pairwise_times(lineages, rng, time_last_event, rho):
     for a, b in itertools.combinations(range(num_lineages), 2):
         _, overlap_length = intersect_lineages(lineages[a], lineages[b])
         if overlap_length > 0:
-            # get node times events
-            T = time_last_event - min(lineages[a].node_time, lineages[b].node_time)
+            T = 2 * time_last_event - (lineages[a].node_time + lineages[b].node_time)
             new_event_time = draw_event_time(2, rho * overlap_length, rng, T / 2)
             pairwise_times[combinadic_map((a, b))] = new_event_time
 
