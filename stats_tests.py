@@ -84,22 +84,37 @@ class TestMargTBL(Test):
     Test marginal total branch length
     """
 
-    def test_tbl(self):
+    def no_test_tbl(self):
         rho = 7.5e-4
         L = 1000
+        param_str = f"L_{L}_rho_{rho}"
         num_replicates = 500
 
         for n in [2, 4, 8]:
             # expecation based coalescence rates
             for rejection in True, False:
-                self.verify_single_model(rho, L, n, num_replicates, rejection)
+                self.verify_single_model(rho, L, n, num_replicates, rejection, param_str=param_str)
             # same tests for pairwise rates
             self.verify_single_model(
-                rho, L, n, num_replicates, rejection=False, expectation=False
+                rho, L, n, num_replicates, rejection=False, expectation=False, param_str=param_str
+            )
+
+    def test_tbl2(self):
+        rho = 5e-4
+        L = 1e5
+        param_str = f"L_{L}_rho_{rho}"
+        num_replicates = 500
+        for n in [2, 4, 8]:
+            # expecation based coalescence rates
+            for rejection in True, False:
+                self.verify_single_model(rho, L, n, num_replicates, rejection, param_str=param_str)
+            # same tests for pairwise rates
+            self.verify_single_model(
+                rho, L, n, num_replicates, rejection=False, expectation=False, param_str=param_str
             )
 
     def verify_single_model(
-        self, rho, L, n, num_replicates, rejection=True, expectation=True
+        self, rho, L, n, num_replicates, rejection=True, expectation=True, param_str=""
     ):
         trt, tbl, t1, tn = self.get_marginal_tree_stats(
             rho, L, n, num_replicates, rejection, expectation
@@ -108,7 +123,7 @@ class TestMargTBL(Test):
             model = "rejection" if rejection else "weighted"
         else:
             model = "pairwise"
-        self.verify_marginal_tree_stats(trt, tbl, n, model, t1, tn)
+        self.verify_marginal_tree_stats(trt, tbl, n, model, t1, tn, param_str)
 
     def no_test_run_specific_seeds(self):
         n = 8
@@ -186,18 +201,18 @@ class TestMargTBL(Test):
             t1[i] = min(tree.time(tree.parent(u)) for u in tree.samples())
         return trt, tbl, t1, tn
 
-    def verify_marginal_tree_stats(self, trt, tbl, n, model, t1=None, tn=None):
+    def verify_marginal_tree_stats(self, trt, tbl, n, model, t1=None, tn=None, param_str=""):
         num_replicates = trt.size
         exp_trt = self.sample_marginal_tree_depth(n, num_replicates)
         self.require_output_dir(f"n_{n}")
-        self.plot_qq(trt, exp_trt, "yaca", "sum_exp", f"n_{n}/tree_depth_{model}")
+        self.plot_qq(trt, exp_trt, "yaca", "sum_exp", f"n_{n}/tree_depth_{model}_{param_str}")
         if isinstance(t1, np.ndarray) and isinstance(tn, np.ndarray):
             exp_t1 = np.random.exponential(
                 scale=1 / math.comb(n, 2), size=num_replicates
             )
             exp_tn = np.random.exponential(scale=1, size=num_replicates)
-            self.plot_qq(t1, exp_t1, "yaca", "t1", f"n_{n}/t1_{model}")
-            self.plot_qq(tn, exp_tn, "yaca", "tn", f"n_{n}/tn_{model}")
+            self.plot_qq(t1, exp_t1, "yaca", "t1", f"n_{n}/t1_{model}_{param_str}")
+            self.plot_qq(tn, exp_tn, "yaca", "tn", f"n_{n}/tn_{model}_{param_str}")
 
     def sample_marginal_tree_depth(self, n, num_replicates):
         result = np.zeros(num_replicates, dtype=np.float64)
@@ -311,12 +326,12 @@ class TestRecombination(Test):
         rho = 5e-4
         L = 1e5
         n = 4
-        expectation = False
-        rejection = False
+        expectation = True
+        rejection = True
         num_reps = 500
         rng = np.random.default_rng()
         tree_span_exp = self.sample_tree_span(n, rho, rng, num_reps)
-        tree_span_yaca, tree_span_yaca_exp, num_trees_yaca = self.sample_tree_span_yaca(
+        tree_span_yaca, tree_span_yaca_exp, num_trees_yaca = self.sample_yaca_tree_stats(
             n, rho, L, num_reps, rejection, expectation
         )
 
@@ -329,7 +344,7 @@ class TestRecombination(Test):
         # self.plot_qq(
         #    tree_span_yaca, tree_span_exp, "yaca", "exp", "marginal_tree_span_yaca_exp"
         # )
-        tree_span_hudson, num_trees_hudson = self.sample_tree_span_sim(
+        tree_span_hudson, num_trees_hudson = self.sample_hudson_tree_stats(
             n, rho, L, num_reps
         )
         # self.plot_qq(tree_span_exp, tree_span_hudson, 'exp', 'hudson', 'marginal_tree_span_exp_hudson')
@@ -338,21 +353,24 @@ class TestRecombination(Test):
             tree_span_hudson,
             "yaca",
             "hudson",
-            "marginal_tree_span_yaca_hudson",
+            "marginal_tree_span_yaca_expb_hudson",
         )
         self.plot_qq(
-            num_trees_yaca, num_trees_hudson, "yaca", "hudson", "num_trees_yaca_hudson"
+            num_trees_yaca,
+            num_trees_hudson,
+            "yaca", "hudson",
+            "num_trees_yaca_expb_hudson"
         )
 
-    def test_msp_msp_exact(self):
+    def no_test_msp_msp_exact(self):
         rho = 5e-4
         L = 1e5
         n = 4
         num_reps = 1000
 
-        num_trees_msp = self.sample_num_trees_msprime(n, rho, L, num_reps)
+        num_trees_msp = self.sample_msprime_tree_stats(n, rho, L, num_reps)
 
-        _, num_trees_exact = self.sample_tree_span_sim(n, rho, L, num_reps)
+        _, num_trees_exact = self.sample_hudson_tree_stats(n, rho, L, num_reps)
         self.plot_qq(
             num_trees_msp, num_trees_exact, "smc", "hudson", "num_trees_hudson_smc"
         )
@@ -369,7 +387,7 @@ class TestRecombination(Test):
         rates = tbl * rho / 2
         return rng.exponential(scale=1 / rates)
 
-    def sample_tree_span_yaca(self, n, rho, L, num_reps, rejection, expectation):
+    def sample_yaca_tree_stats(self, n, rho, L, num_reps, rejection, expectation):
         tss = self.run_yaca(rho, L, n, num_reps, rejection, expectation)
         results = np.zeros((3, num_reps), dtype=np.float64)
         for i, ts in enumerate(tss):
@@ -380,7 +398,7 @@ class TestRecombination(Test):
             results[2, i] = ts.num_trees
         return results
 
-    def sample_tree_span_sim(self, n, rho, L, num_reps):
+    def sample_hudson_tree_stats(self, n, rho, L, num_reps):
         simulator = msprime.ancestry._parse_sim_ancestry(
             samples=n,
             sequence_length=L,
@@ -401,7 +419,7 @@ class TestRecombination(Test):
             simulator.reset()
         return results
 
-    def sample_num_trees_msprime(self, n, rho, L, num_reps):
+    def sample_msprime_tree_stats(self, n, rho, L, num_reps):
         tss = msprime.sim_ancestry(
             samples=n,
             sequence_length=L,
