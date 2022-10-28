@@ -112,7 +112,7 @@ def time_to_next_coalescent_event(lineages, rho, t, seed=None):
             left_lineage = rng.choices(lineages, weights=lineage_links)[0]
             breakpoint = left_lineage.hull * rng.random() + left_lineage.left
             assert left_lineage.left < breakpoint < left_lineage.right
-            right_lineage = left_lineage.split(breakpoint, t)
+            right_lineage = left_lineage.split(breakpoint)
             lineages.append(right_lineage)
             child = left_lineage.node
 

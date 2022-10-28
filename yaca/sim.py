@@ -79,7 +79,7 @@ class Lineage:
         """
         return self.ancestry[-1].right
 
-    def split(self, breakpoint, t):
+    def split(self, breakpoint):
         """
         Splits the ancestral material for this lineage at the specified
         breakpoint, and returns a second lineage with the ancestral
@@ -97,7 +97,7 @@ class Lineage:
                 left_ancestry.append(dataclasses.replace(interval, right=breakpoint))
                 right_ancestry.append(dataclasses.replace(interval, left=breakpoint))
         self.ancestry = left_ancestry
-        return Lineage(self.node, right_ancestry, t)
+        return Lineage(self.node, right_ancestry, self.node_time)
 
 
 @dataclasses.dataclass
@@ -112,20 +112,22 @@ def inverse_expectation_function(x, rho, k):
     return (-c + math.sqrt(c**2 + 4 * x * rho)) / (2 * rho)
 
 
-def inverse_expectation_function_extended(x, rho, k, T):
+def inverse_expectation_function_extended(x, rho, c, T):
     """
     Inverse function of cumulative hazard function.
-
-    T is mean time of nodes to last coalescenc event.
+    c is the number of lineages that overlap
+    T is weighted time of nodes to last coalescenc event.
     """
-    c = k * (k - 1) / 2
-    d = 2 * T * rho
-    return (-c - d + math.sqrt((c + d) ** 2 + 4 * x * rho)) / (2 * rho)
+    d = T * rho
+    t1 = 2 * c + d
+    # return (-t1 + math.sqrt(t1 ** 2 + 8 * x * rho)) / (2 * rho)
+    return (-t1 + math.sqrt(t1 ** 2 + 8 * x * rho)) / (2 * rho)
 
 
-def draw_event_time(num_lineages, rho, rng, T=0):
+def draw_event_time(num_pairs_overlap, rho, rng, T=0):
+#def draw_event_time(num_lineages, rho, rng, T=0):    
     """
-    Given expected coalescence rate (k choose 2) + (2*(t + T)*rho),
+    Given expected coalescence rate num_pairs_overlap + (2*t + T) * rho / 2),
     draw single random value t from the non-homogeneous
     exponential distribution
     rho is the total overlap of all combinations expressed
@@ -133,14 +135,15 @@ def draw_event_time(num_lineages, rho, rng, T=0):
 
     Inverse sampling formula for non-homogeneous exponential
     given rate as described above.
-    T is the (mean) time to the last coalescence event.
+    T is the (weighted mean) time to the last coalescence event.
     """
     if rho == 0.0:
-        return rng.expovariate(math.comb(num_lineages, 2))
+        #return rng.expovariate(math.comb(num_lineages, 2))
+        return rng.expovariate(num_pairs_overlap)
     else:
         # draw random value from exponential with rate 1
         s = rng.expovariate(1)
-        return inverse_expectation_function_extended(s, rho / 2, num_lineages, T)
+        return inverse_expectation_function_extended(s, rho, num_pairs_overlap, T)
 
 
 def intersect_lineages(a, b):
@@ -284,12 +287,22 @@ def update_total_overlap(ancestry, n):
     return total
 
 
-def update_total_overlap_brute_force(lineages):
+def update_total_overlap_brute_force(lineages, last_event):
     total = 0
+    pairs_count = 0
+    overlap_weighted_node_times = 0
     for a, b in itertools.combinations(lineages, 2):
         _, overlap_length = intersect_lineages(a, b)
         total += overlap_length
-    return total
+        if overlap_length > 0:
+            pairs_count += 1
+            overlap_weighted_node_times += overlap_length * sum(last_event - n.node_time for n in (a,b))
+    if total > 0:
+        overlap_weighted_node_times /= total
+    else:
+        overlap_weighted_node_times = math.inf
+    
+    return total, overlap_weighted_node_times, pairs_count
 
 
 def sample_pairwise_rates(lineages, t, rho, rng):
@@ -299,7 +312,7 @@ def sample_pairwise_rates(lineages, t, rho, rng):
         overlapping = int(overlap_length > 0)
         rate = (
             1
-            + (2 * t - (lineages[a].node_time + lineages[b].node_time))
+            + (2 * t - sum(n.node_time for n in (lineages[a], lineages[b])))
             * overlap_length
             * rho
             / 2
@@ -324,12 +337,14 @@ def sample_pairwise_times(lineages, rng, time_last_event, rho):
         _, overlap_length = intersect_lineages(lineages[a], lineages[b])
         if overlap_length > 0:
             T = 2 * time_last_event - (lineages[a].node_time + lineages[b].node_time)
-            new_event_time = draw_event_time(2, rho * overlap_length, rng, T / 2)
+            new_event_time = draw_event_time(1, rho * overlap_length, rng, T)
             pairwise_times[combinadic_map((a, b))] = new_event_time
 
     # pick pair with smallest new_event_time
     non_zero_times = np.nonzero(pairwise_times)[0]
+    return pairwise_times[non_zero_times]
     selected_idx = non_zero_times[np.argmin(pairwise_times[non_zero_times])]
+    
     a, b = reverse_combinadic_map(selected_idx)
     overlap, overlap_length = intersect_lineages(lineages[a], lineages[b])
 
@@ -353,8 +368,10 @@ def sim_yaca(n, rho, L, seed=None, rejection=True, verbose=False, expectation=Tr
     tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
     lineages = []
     nodes = []
-    total_overlap = L * n * (n - 1) / 2
+    num_pairs_overlap = n * (n - 1) / 2
+    total_overlap = L * num_pairs_overlap
     t = 0
+    overlap_weighted_node_times = 0
 
     for _ in range(n):
         lineages.append(Lineage(len(nodes), [AncestryInterval(0, L, 1)], t))
@@ -368,12 +385,9 @@ def sim_yaca(n, rho, L, seed=None, rejection=True, verbose=False, expectation=Tr
         # either based on mean time to last event (expectation)
         # or based on pairwise rates
         if expectation:
-            # waiting time to next coalescence event
-            mean_time_to_last_event = sum(
-                t - lineage.node_time for lineage in lineages
-            ) / len(lineages)
+            # use overlap_weighted_node_times to draw new value
             new_event_time = draw_event_time(
-                len(lineages), total_overlap * rho, rng, mean_time_to_last_event
+                num_pairs_overlap, total_overlap * rho, rng, overlap_weighted_node_times
             )
             t += new_event_time
 
@@ -419,7 +433,7 @@ def sim_yaca(n, rho, L, seed=None, rejection=True, verbose=False, expectation=Tr
             lineages.append(c)
 
         # update total_overlap
-        total_overlap = update_total_overlap_brute_force(lineages)
+        total_overlap, overlap_weighted_node_times, num_pairs_overlap = update_total_overlap_brute_force(lineages, t)
         if verbose:
             check_progress(lineages, total_overlap)
 

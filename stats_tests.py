@@ -2,6 +2,7 @@ import argparse
 import inspect
 import itertools
 import msprime
+import msprime._msprime as _msp
 import numpy as np
 import random
 import scipy
@@ -87,7 +88,7 @@ class TestMargTBL(Test):
     def no_test_tbl(self):
         rho = 7.5e-4
         L = 1000
-        param_str = f"L_{L}_rho_{rho}"
+        param_str = f"L_{L}_rho_{rho}_ownt"
         num_replicates = 500
 
         for n in [2, 4, 8]:
@@ -102,16 +103,16 @@ class TestMargTBL(Test):
     def test_tbl2(self):
         rho = 5e-4
         L = 1e5
-        param_str = f"L_{L}_rho_{rho}"
+        param_str = f"L_{L}_rho_{rho}_ownt"
         num_replicates = 500
         for n in [2, 4, 8]:
             # expecation based coalescence rates
             for rejection in True, False:
                 self.verify_single_model(rho, L, n, num_replicates, rejection, param_str=param_str)
             # same tests for pairwise rates
-            self.verify_single_model(
-                rho, L, n, num_replicates, rejection=False, expectation=False, param_str=param_str
-            )
+            #self.verify_single_model(
+            #    rho, L, n, num_replicates, rejection=False, expectation=False, param_str=param_str
+            #)
 
     def verify_single_model(
         self, rho, L, n, num_replicates, rejection=True, expectation=True, param_str=""
@@ -872,6 +873,99 @@ class TestFoo(Test):
             left, right = sim.pick_breakpoints(a, total_overlap, rho, 2, (0, 0), seed)
             print(left, right)
 
+class TestSingleStep(Test):
+
+    def test_single(self):
+        n = 16
+        rho = 1e-3
+        L = 1e5
+        num_replicates = 500
+        run_until = 2.5
+        param_str = f"n{n}_rho{rho}_L{L}"
+
+        coal_time_msp = np.zeros(num_replicates, dtype=np.float64)
+        coal_time_yaca = np.zeros_like(coal_time_msp)
+        coal_time_test = np.zeros_like(coal_time_msp)
+        seeds = self.get_seeds(num_replicates)
+        ts, lineages = self.generate_lineages(n, rho, L, run_until)
+        #print(ts.tables.nodes.time)
+        for i in tqdm(range(num_replicates)):
+            coal_time_msp[i] = self.run_msp_single_step(rho, ts, run_until)
+            coal_time_yaca[i] = self.draw_waiting_time_yaca(rho, lineages, seeds[i])
+                       
+        print(np.min(coal_time_msp), np.min(coal_time_yaca))
+        print(np.min(coal_time_msp) - np.min(coal_time_yaca))
+        self.plot_qq(coal_time_yaca, coal_time_msp, 'yaca', 'msp', f"simpl_single_step_{param_str}")
+        # self.plot_qq(coal_time_test, coal_time_msp, 'test', 'msp', f"test_single_step_{param_str}")
+
+    def ts_to_lineages(self, ts):
+        lineages = dict()
+        ts = ts.simplify()
+        
+        for tree in ts.trees():
+            for root in tree.roots:
+                ancestral_to = tree.num_samples(root) 
+                left, right = tree.interval.left, tree.interval.right
+                new_ancestry_interval = sim.AncestryInterval(left, right, ancestral_to)
+                if root not in lineages:
+                    lineages[root] = sim.Lineage(root, [new_ancestry_interval], tree.time(root))
+                else:
+                    if left == lineages[root].ancestry[-1].right:
+                        lineages[root].ancestry[-1].right = right            
+                    else:
+                        lineages[root].ancestry.append(new_ancestry_interval)
+        
+        return list(lineages.values())
+
+    def generate_lineages(self, n, rho, L, run_until):
+        ret = False
+        
+        while not ret:
+            ts = msprime.sim_ancestry(
+                samples=n,
+                sequence_length=L,
+                recombination_rate=rho / 2,
+                ploidy=1,
+                discrete_genome=False,
+                population_size=1,
+                end_time=run_until
+            )
+            ret = max(tree.num_roots for tree in ts.trees())>1
+        lineages = self.ts_to_lineages(ts)
+
+        return ts, lineages
+
+    def run_msp_single_step(self, rho, ts, sim_start_time, time_step=0.5):
+        simulator = msprime.ancestry._parse_sim_ancestry(
+            recombination_rate=rho / 2,
+            ploidy=1,
+            discrete_genome=False,
+            population_size=1,
+            initial_state=ts
+            )
+        old_time = simulator.time
+        # extract time to next coalescence
+        new_time = old_time
+        num_nodes = simulator.num_nodes
+        while simulator.num_nodes == num_nodes:
+            new_time += time_step
+            simulator._run_until(new_time)
+
+        tables = tskit.TableCollection.fromdict(simulator.tables.asdict())
+        tables.simplify()
+        times = tables.nodes.time
+        last_coal_idx = np.sum(times<=old_time)
+        return times[last_coal_idx] - times[last_coal_idx - 1]
+        #return times[last_coal_idx] - old_time
+
+    def draw_waiting_time_yaca(self, rho, lineages, seed):
+        last_event = max(lineage.node_time for lineage in lineages)
+        total, overlap_weighted_node_times, pairs_count = sim.update_total_overlap_brute_force(lineages, last_event)
+        
+        rng = random.Random(seed)
+        total_overlap_rho = rho * total
+        new_time = sim.draw_event_time(pairs_count, total_overlap_rho, rng, overlap_weighted_node_times)
+        return new_time
 
 def run_tests(suite, output_dir):
     for cl_name in suite:
@@ -890,7 +984,7 @@ def main():
         "TestVisualize",
         "TestAgainstSmc",
         "TestFoo",
-    ]
+        "TestSingleStep"    ]
 
     parser.add_argument(
         "--test-class",
