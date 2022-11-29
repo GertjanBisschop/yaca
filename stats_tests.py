@@ -13,6 +13,7 @@ import matplotlib
 import pathlib
 import sys
 from tqdm import tqdm
+from collections.abc import Iterable
 
 matplotlib.use("Agg")
 import statsmodels.api as sm
@@ -50,11 +51,12 @@ class Test:
     def _build_filename(self, filename):
         return self.output_dir / (filename + ".png")
 
-    def plot_qq(self, v1, v2, x_label, y_label, filename):
+    def plot_qq(self, v1, v2, x_label, y_label, filename, info=''):
         sm.graphics.qqplot(v1)
         sm.qqplot_2samples(v1, v2, line="45")
         plt.xlabel(x_label)
         plt.ylabel(y_label)
+        plt.title(info)
         f = self._build_filename(filename)
         plt.savefig(f, dpi=72)
         plt.close("all")
@@ -875,51 +877,153 @@ class TestFoo(Test):
 
 class TestSingleStep(Test):
 
-    def test_single(self):
+    def no_test_single(self):
         n = 16
         rho = 1e-3
         L = 1e5
         num_replicates = 500
         run_until = 2.5
         param_str = f"n{n}_rho{rho}_L{L}"
-
+        k = 2
+        
         coal_time_msp = np.zeros(num_replicates, dtype=np.float64)
         coal_time_yaca = np.zeros_like(coal_time_msp)
-        coal_time_test = np.zeros_like(coal_time_msp)
+        #coal_time_yaca_taylor = np.zeros((k, num_replicates), dtype=np.float64)
+
         seeds = self.get_seeds(num_replicates)
-        ts, lineages = self.generate_lineages(n, rho, L, run_until)
-        #print(ts.tables.nodes.time)
+        ts = self.generate_lineages(n, rho, L, run_until)
+        lineages, last_event = self.ts_to_lineages(ts)
+        total, overlap_weighted_node_times, pairs_count, pairwise_overlap_counter = sim.update_total_overlap_brute_force(lineages, last_event)
+        print('mean:', np.mean(pairwise_overlap_counter[pairwise_overlap_counter>0]))
+        print('max:', np.max(pairwise_overlap_counter))
+        print('all:', pairwise_overlap_counter[pairwise_overlap_counter>0])
+        total_overlap_rho = total * rho
+
         for i in tqdm(range(num_replicates)):
             coal_time_msp[i] = self.run_msp_single_step(rho, ts, run_until)
-            coal_time_yaca[i] = self.draw_waiting_time_yaca(rho, lineages, seeds[i])
-                       
-        print(np.min(coal_time_msp), np.min(coal_time_yaca))
-        print(np.min(coal_time_msp) - np.min(coal_time_yaca))
-        self.plot_qq(coal_time_yaca, coal_time_msp, 'yaca', 'msp', f"simpl_single_step_{param_str}")
-        # self.plot_qq(coal_time_test, coal_time_msp, 'test', 'msp', f"test_single_step_{param_str}")
-
-    def ts_to_lineages(self, ts):
-        lineages = dict()
-        ts = ts.simplify()
+            coal_time_yaca[i] = self.draw_waiting_time_yaca( 
+                seeds[i], 
+                run_until, 
+                last_event, 
+                total_overlap_rho,
+                overlap_weighted_node_times,
+                pairs_count
+                )
+            #coal_time_yaca[i] = temp[0]           
+            #coal_time_yaca_taylor[:, i] = temp[1:]
         
+        self.plot_qq(coal_time_yaca, coal_time_msp, 'yaca', 'msp', f"simpl_single_step_{param_str}")
+        #for i in range(k):
+        #    j = (i + 1) * 2
+        #    self.plot_qq(coal_time_yaca_taylor[i], coal_time_msp, 'yaca', 'msp', f"simpl_single_step_{param_str}_taylor_k_{j}")
+
+    def no_test_single_pair(self):
+        n = 16
+        rho = 1e-3
+        L = 1e5
+        num_replicates = 500
+        run_until = 1.5
+        param_str = f"n{n}_rho{rho}_L{L}_ru{run_until}"
+        seeds = self.get_seeds(num_replicates)
+        coal_time_msp = np.zeros(num_replicates, dtype=np.float64)
+        coal_time_yaca = np.zeros_like(coal_time_msp)
+        
+        # fix up generate_lineage_pair
+        ts, pair = self.generate_lineage_pair(n, rho, L, run_until)
+        lineages, node_time_diff = self.ts_to_lineages(ts, pair)
+        last_event = max([l.node_time for l in lineages])
+        
+        overlap_intervals, overlap = sim.intersect_lineages(*lineages)
+        overlap_rho = rho * overlap
+        overlap_weighted_node_times = last_event
+        
+        oldest_node = max([l.node_time for l in lineages])
+        last_event = run_until
+        start_time_exp_process = last_event - oldest_node
+        rng = random.Random()
+        
+        for i in tqdm(range(num_replicates)):
+            # coal_time_msp contains time from oldest node in pair to their first coalescence event along the genome
+            coal_time_msp[i] = self.run_msp_single_step_pair(pair, rho, ts, run_until)
+            new_time = sim.draw_event_time_downsample(1, overlap_rho, rng, node_time_diff, start_time_exp_process)          
+            coal_time_yaca[i] = new_time
+
+        coal_time_msp -= oldest_node
+        
+        self.plot_qq(coal_time_yaca, coal_time_msp, 'yaca', 'msp', f"pair_single_step3_{param_str}")
+
+    def test_single_n2(self):
+        n = 2
+        rho = 1e-3
+        L = 1e5
+        num_replicates = 500
+        run_until = 0.5
+        param_str = f"n{n}_rho{rho}_L{L}"
+        
+        coal_time_msp = np.zeros(num_replicates, dtype=np.float64)
+        coal_time_yaca = np.zeros_like(coal_time_msp)
+        ts = self.generate_lineages(n, rho, L, run_until)
+        pair = (0, 1)
+        lineages, node_time_diff = self.ts_to_lineages(ts, pair)
+        
+        overlap_intervals, overlap = sim.intersect_lineages(*lineages)
+        overlap_rho = rho * overlap
+        print('overlap:', overlap)
+
+        oldest_node = max([l.node_time for l in lineages])
+        last_event = run_until
+        start_time_exp_process = last_event - oldest_node
+
+        rng = random.Random()
+        for i in tqdm(range(num_replicates)):
+            # contains time to first node coalesced after
+            coal_time_msp[i] = self.run_msp_single_step_pair(pair, rho, ts, run_until)
+            # new time is absolute time relative to oldest_node 
+            new_time = sim.draw_event_time_downsample(1, overlap_rho, rng, node_time_diff, start_time_exp_process)
+            coal_time_yaca[i] = new_time
+
+        coal_time_msp -= oldest_node
+        info = self.make_info_str({'overlap': round(overlap), 'num_segments': len(overlap_intervals)})
+        self.plot_qq(coal_time_yaca, coal_time_msp, 'yaca', 'msp', f"n2_single_step_{param_str}", info)
+
+    def make_info_str(self, kwargs):
+        result = ""
+        for key, value in kwargs.items():
+            result += f"{key}:{value}, "
+        return result
+
+    def ts_to_lineages(self, ts, idxs=None):
+        lineages = dict()
+    
+        num_samples = ts.num_samples
+        last_coal_event = np.max(ts.nodes_time)
+
         for tree in ts.trees():
             for root in tree.roots:
+                if tree.num_children(root) == 1:
+                    root = tree.children(root)[0]
                 ancestral_to = tree.num_samples(root) 
-                left, right = tree.interval.left, tree.interval.right
-                new_ancestry_interval = sim.AncestryInterval(left, right, ancestral_to)
-                if root not in lineages:
-                    lineages[root] = sim.Lineage(root, [new_ancestry_interval], tree.time(root))
-                else:
-                    if left == lineages[root].ancestry[-1].right:
-                        lineages[root].ancestry[-1].right = right            
+                if ancestral_to < num_samples:
+                    left, right = tree.interval.left, tree.interval.right
+                    new_ancestry_interval = sim.AncestryInterval(left, right, ancestral_to)
+                    if root not in lineages:
+                        lineages[root] = sim.Lineage(root, [new_ancestry_interval], tree.time(root))
                     else:
-                        lineages[root].ancestry.append(new_ancestry_interval)
-        
-        return list(lineages.values())
+                        prev = lineages[root].ancestry[-1]
+                        if left == prev.right and ancestral_to == prev.ancestral_to:
+                            prev.right = right            
+                        else:
+                            lineages[root].ancestry.append(new_ancestry_interval)
+            
+        if isinstance(idxs, Iterable):
+            last_coal_event = abs(ts.nodes_time[idxs[0]] - ts.nodes_time[idxs[1]])
+            return [lineages[i] for i in idxs], last_coal_event
+
+        return list(lineages.values()), last_coal_event
 
     def generate_lineages(self, n, rho, L, run_until):
         ret = False
-        
+
         while not ret:
             ts = msprime.sim_ancestry(
                 samples=n,
@@ -931,9 +1035,8 @@ class TestSingleStep(Test):
                 end_time=run_until
             )
             ret = max(tree.num_roots for tree in ts.trees())>1
-        lineages = self.ts_to_lineages(ts)
-
-        return ts, lineages
+        
+        return ts
 
     def run_msp_single_step(self, rho, ts, sim_start_time, time_step=0.5):
         simulator = msprime.ancestry._parse_sim_ancestry(
@@ -952,20 +1055,74 @@ class TestSingleStep(Test):
             simulator._run_until(new_time)
 
         tables = tskit.TableCollection.fromdict(simulator.tables.asdict())
-        tables.simplify()
+        tables.simplify() # does simplification have an unwanted impact here?
         times = tables.nodes.time
         last_coal_idx = np.sum(times<=old_time)
         return times[last_coal_idx] - times[last_coal_idx - 1]
-        #return times[last_coal_idx] - old_time
 
-    def draw_waiting_time_yaca(self, rho, lineages, seed):
-        last_event = max(lineage.node_time for lineage in lineages)
-        total, overlap_weighted_node_times, pairs_count = sim.update_total_overlap_brute_force(lineages, last_event)
-        
+    def draw_waiting_time_yaca(self, seed, sim_until, last_event, total_overlap_rho, overlap_weighted_node_times, pairs_count):
+        time_last_event = sim_until
+
         rng = random.Random(seed)
-        total_overlap_rho = rho * total
         new_time = sim.draw_event_time(pairs_count, total_overlap_rho, rng, overlap_weighted_node_times)
-        return new_time
+        return new_time + (time_last_event - last_event)
+
+    def generate_lineage_pair(self, n, rho, L, run_until):
+        ret = True
+    
+        while ret:
+            ts = self.generate_lineages(n, rho, L, run_until)
+            pair = self.find_pair(ts)
+            ret = max(pair) == -1
+        return ts, pair
+
+    def find_pair(self, ts):
+        
+        S = set()
+        for tree in ts.trees():
+            if tree.num_roots>1:
+                temp = []
+                for root in tree.roots:
+                    children = tree.children(root)
+                    if len(children) == 1:
+                        temp.append(children[0])
+                for comb in itertools.combinations(temp, 2):
+                    S.add(tuple(sorted(comb)))
+    
+        S = list(S)
+        if len(S) == 0:
+            return (-1, -1)
+        print('number of possible pairs:', len(S))
+        idx = random.randrange(len(S))
+        return S[idx]
+    
+    def find_pair_coalesced(self, ts, pair, after=0.0):
+        """
+        Returns smallest node time for parent of pair after time after
+        """
+        temp = math.inf
+        for tree in ts.trees():
+            if tree.right_sib(pair[0]) == pair[1] or tree.left_sib(pair[0]) == pair[1]:
+                node_time_parent = tree.time(tree.parent(pair[0]))
+                if node_time_parent > after:
+                    temp = min(temp, node_time_parent)
+        return temp
+    
+    def run_msp_single_step_pair(self, pair, rho, ts, resume_at=0.0):
+        temp = math.inf
+        while temp == math.inf:
+            ts_new = msprime.sim_ancestry(
+                recombination_rate=rho / 2,
+                ploidy=1,
+                discrete_genome=False,
+                population_size=1,
+                initial_state=ts
+                )
+            ts_new, node_map = ts_new.simplify(map_nodes=True)
+            new_pair = [node_map[i] for i in pair]
+            temp = self.find_pair_coalesced(ts_new, new_pair, resume_at)
+    
+        return temp
 
 def run_tests(suite, output_dir):
     for cl_name in suite:

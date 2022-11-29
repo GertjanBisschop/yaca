@@ -2,6 +2,7 @@ import itertools
 import pytest
 import random
 import numpy as np
+import msprime
 
 import yaca.sim as sim
 import yaca.sim_hudson as simh
@@ -27,7 +28,7 @@ class TestInverseExpectationFunction:
                 sim.inverse_expectation_function_extended(f_x, rho, k, T), x
             )
 
-
+@pytest.mark.overlap
 class TestIntersect:
     def test_intersect_segment(self):
         a = sim.Lineage(
@@ -83,63 +84,23 @@ class TestIntersect:
         assert len(overlap) == 1
         overlap_length == 1000 - edge2
 
-    @pytest.mark.parametrize(
-        "breakpoints, exp",
-        [
-            ([5, 8], [sim.AncestryInterval(5, 6, 0), sim.AncestryInterval(10, 12, 0)]),
-            ([5, 9], [sim.AncestryInterval(5, 6, 0), sim.AncestryInterval(10, 13, 0)]),
-            ([5, 10], [sim.AncestryInterval(5, 6, 0), sim.AncestryInterval(10, 14, 0)]),
-            ([5, 11], [sim.AncestryInterval(5, 6, 0), sim.AncestryInterval(10, 15, 0)]),
-            (
-                [5, 12],
-                [
-                    sim.AncestryInterval(5, 6, 0),
-                    sim.AncestryInterval(10, 15, 0),
-                    sim.AncestryInterval(20, 21, 0),
-                ],
-            ),
-            (
-                [0, 12],
-                [
-                    sim.AncestryInterval(0, 6, 0),
-                    sim.AncestryInterval(10, 15, 0),
-                    sim.AncestryInterval(20, 21, 0),
-                ],
-            ),
-            ([11, 12], [sim.AncestryInterval(20, 21, 0)]),
-            (
-                [0, 15],
-                [
-                    sim.AncestryInterval(0, 6, 0),
-                    sim.AncestryInterval(10, 15, 0),
-                    sim.AncestryInterval(20, 24, 0),
-                ],
-            ),
-            (
-                [0, 31],
-                [
-                    sim.AncestryInterval(0, 6, 0),
-                    sim.AncestryInterval(10, 15, 0),
-                    sim.AncestryInterval(20, 40, 0),
-                ],
-            ),
-        ],
-    )
-    def test_merge_segment(self, breakpoints, exp):
-        test_intervals = [
-            sim.AncestryInterval(0, 6, 0),
-            sim.AncestryInterval(10, 15, 0),
-            sim.AncestryInterval(20, 40, 0),
-        ]
-        result = list(sim.merge_segment(test_intervals, breakpoints))
-        assert result == exp
+    def test_intersect_segment4(self):
+        edges = [random.random() for _ in range(10)]
+        a = sim.Lineage(0, [
+            sim.AncestryInterval(1.0, edges[0], 0),
+            sim.AncestryInterval(edges[1], edges[2], 0),
+            sim.AncestryInterval(edges[4], edges[6], 0),
+                ]   
+            )
+        b = sim.Lineage(0, [
+            sim.AncestryInterval(edges[0], edges[1], 0),
+            sim.AncestryInterval(edges[1], edges[2], 0),
+            sim.AncestryInterval(edges[3], edges[5], 0),
+                ]   
+            )
+        overlap, overlap_length = sim.intersect_lineages(a, b)
+        exp_length = (edges[2] - edges[1]) + (edges[5] - edges[4])
 
-    def test_merge_segment_simple(self):
-        test_intervals = [
-            sim.AncestryInterval(0, 5, 0),
-        ]
-        result = list(sim.merge_segment(test_intervals, [0, 5]))
-        assert result == test_intervals
 
     def test_remove_segment(self):
         lineage = sim.Lineage(
@@ -225,40 +186,6 @@ class TestIntersect:
         assert len(test_result) == len(expected)
         for interval, exp in zip(test_result, expected):
             assert interval == exp
-
-    def test_pick_breakpoints_zero(self):
-        seed = 42
-        T = 10
-        rho = 0.0
-        overlap = [
-            sim.AncestryInterval(11, 15, 4),
-            sim.AncestryInterval(17, 20, 3),
-            sim.AncestryInterval(23, 30, 1),
-        ]
-        total_overlap = sum(e.span for e in overlap)
-        node_times = (0, 0)
-        breakpoints = sim.pick_breakpoints(
-            overlap, total_overlap, rho, T, node_times, seed
-        )
-        assert breakpoints == (0, total_overlap)
-        merged_segment = list(sim.merge_segment(overlap, breakpoints))
-        assert merged_segment == overlap
-
-    def test_pick_breakpoints_too_many(self):
-        seed = 42
-        T = 10
-        rho = 1
-        overlap = [
-            sim.AncestryInterval(11, 15, 4),
-            sim.AncestryInterval(17, 20, 3),
-            sim.AncestryInterval(23, 30, 1),
-        ]
-        total_overlap = sum(e.span for e in overlap)
-        node_times = (0, 0)
-        breakpoints = sim.pick_breakpoints(
-            overlap, total_overlap, rho, T, node_times, seed
-        )
-        assert max(breakpoints) <= total_overlap
 
     def test_combinadic_map(self):
         n = 10
@@ -361,3 +288,69 @@ class TestSimHudson:
         ancestry = self.generate_ancestry(L, rng)
         node_time = rng.random()
         return sim.Lineage(i, ancestry, node_time)
+
+class TestExtractLineages:
+    def test_extraction(self):
+        n = 16
+        rho = 1e-3
+        L = 1e5
+        num_replicates = 500
+        run_until = 2.5
+        param_str = f"n{n}_rho{rho}_L{L}"
+
+        coal_time_msp = np.zeros(num_replicates, dtype=np.float64)
+        coal_time_yaca = np.zeros_like(coal_time_msp)
+        
+        _, lineages, lineages_all = self.generate_lineages(n, rho, L, run_until)
+        total, ownt, pairs_count = sim.update_total_overlap_brute_force(lineages, run_until)
+        total_all, ownt_all, pairs_count_all = sim.update_total_overlap_brute_force(lineages_all, run_until)
+        
+        assert total == total_all
+        assert pairs_count == pairs_count_all
+        assert ownt == ownt_all
+
+    def ts_to_lineages(self, ts, include_all=False):
+        lineages = dict()
+        ts = ts.simplify() # remove unary nodes
+        num_samples = ts.num_samples
+        
+        for tree in ts.trees():
+            for root in tree.roots:
+                ancestral_to = tree.num_samples(root) 
+                if ancestral_to < num_samples or include_all:
+                    left, right = tree.interval.left, tree.interval.right
+                    new_ancestry_interval = sim.AncestryInterval(left, right, ancestral_to)
+                    if root not in lineages:
+                        lineages[root] = sim.Lineage(root, [new_ancestry_interval], tree.time(root))
+                    else:
+                        prev = lineages[root].ancestry[-1]
+                        if left == prev.right and ancestral_to == prev.ancestral_to:
+                            prev.right = right            
+                        else:
+                           lineages[root].ancestry.append(new_ancestry_interval)
+        
+
+
+        return list(lineages.values())
+
+    def generate_lineages(self, n, rho, L, run_until):
+        ret = False
+
+        while not ret:
+            seed = random.randint(1,2**16)
+            ts = msprime.sim_ancestry(
+                samples=n,
+                sequence_length=L,
+                recombination_rate=rho / 2,
+                ploidy=1,
+                discrete_genome=False,
+                population_size=1,
+                end_time=run_until,
+                random_seed=seed
+            )
+            ret = max(tree.num_roots for tree in ts.trees())>1
+        
+        lineages = self.ts_to_lineages(ts)
+        lineages_all = self.ts_to_lineages(ts, True)
+
+        return ts, lineages, lineages_all

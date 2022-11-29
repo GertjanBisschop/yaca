@@ -116,16 +116,23 @@ def inverse_expectation_function_extended(x, rho, c, T):
     """
     Inverse function of cumulative hazard function.
     c is the number of lineages that overlap
-    T is weighted time of nodes to last coalescenc event.
+    T is weighted time of nodes to last coalescence event.
     """
     d = T * rho
     t1 = 2 * c + d
-    # return (-t1 + math.sqrt(t1 ** 2 + 8 * x * rho)) / (2 * rho)
     return (-t1 + math.sqrt(t1 ** 2 + 8 * x * rho)) / (2 * rho)
 
+def inverse_expectation_function_extended_bis(x, rho, c, T, L):
+    """
+    Inverse function of cumulative hazard function.
+    c is the number of lineages that overlap
+    T is weighted time of nodes to last coalescence event.
+    L is time of last event
+    """
+    d = (2*L + T) * rho    
+    return (-d - 2*c + math.sqrt((4*c + d) * d + 4*c**2 + 8 * x * rho)) / (2 * rho)
 
 def draw_event_time(num_pairs_overlap, rho, rng, T=0):
-#def draw_event_time(num_lineages, rho, rng, T=0):    
     """
     Given expected coalescence rate num_pairs_overlap + (2*t + T) * rho / 2),
     draw single random value t from the non-homogeneous
@@ -138,12 +145,51 @@ def draw_event_time(num_pairs_overlap, rho, rng, T=0):
     T is the (weighted mean) time to the last coalescence event.
     """
     if rho == 0.0:
-        #return rng.expovariate(math.comb(num_lineages, 2))
         return rng.expovariate(num_pairs_overlap)
     else:
-        # draw random value from exponential with rate 1
         s = rng.expovariate(1)
         return inverse_expectation_function_extended(s, rho, num_pairs_overlap, T)
+
+def draw_event_time_bis(num_pairs_overlap, rho, rng, T=0, L=0):
+    """
+    Given expected coalescence rate num_pairs_overlap + (2*t + T) * rho / 2),
+    draw single random value t from the non-homogeneous
+    exponential distribution
+    rho is the total overlap of all combinations expressed
+    in recombination rate units.
+
+    Inverse sampling formula for non-homogeneous exponential
+    given rate as described above.
+    T is the (weighted mean) time to the last coalescence event.
+    """
+    if rho == 0.0:
+        return rng.expovariate(num_pairs_overlap)
+    else:
+        s = rng.expovariate(1)
+        #s += coal_rate(num_pairs_overlap, rho, L, T)
+        return inverse_expectation_function_extended_bis(s, rho, num_pairs_overlap, T, L)
+
+def coal_rate(c, rho, t, T):
+    return c + (2 * t + T) * rho / 2
+
+def draw_event_time_downsample(c, rho, rng, T=0, start_time=0, p=1, jump=0.1):
+    base = jump + start_time
+    sup_rate = coal_rate(c, rho, base, T)
+    new_time = start_time
+
+    while True:
+        while new_time < base:
+            w = rng.expovariate(sup_rate)
+            new_time += w
+            u = rng.uniform(0, 1)
+            if u < coal_rate(c, rho, new_time, T) / sup_rate:
+                if rng.uniform(0, 1) <= p:
+                    return new_time
+
+        base += jump
+        sup_rate = coal_rate(c, rho, base, T)
+
+    return new_time
 
 
 def intersect_lineages(a, b):
@@ -291,18 +337,21 @@ def update_total_overlap_brute_force(lineages, last_event):
     total = 0
     pairs_count = 0
     overlap_weighted_node_times = 0
-    for a, b in itertools.combinations(lineages, 2):
-        _, overlap_length = intersect_lineages(a, b)
+    pairwise_overlap_counter = np.zeros(math.comb(len(lineages), 2), dtype=np.int64)
+    for a, b in itertools.combinations(range(len(lineages)), 2):
+        _, overlap_length = intersect_lineages(lineages[a], lineages[b])
         total += overlap_length
         if overlap_length > 0:
             pairs_count += 1
-            overlap_weighted_node_times += overlap_length * sum(last_event - n.node_time for n in (a,b))
+            overlap_weighted_node_times += (overlap_length * sum(last_event - n.node_time for n in (lineages[a],lineages[b])))
+            pairwise_overlap_counter[a] += 1
+            pairwise_overlap_counter[b] += 1
     if total > 0:
         overlap_weighted_node_times /= total
     else:
         overlap_weighted_node_times = math.inf
     
-    return total, overlap_weighted_node_times, pairs_count
+    return total, overlap_weighted_node_times, pairs_count, pairwise_overlap_counter
 
 
 def sample_pairwise_rates(lineages, t, rho, rng):
