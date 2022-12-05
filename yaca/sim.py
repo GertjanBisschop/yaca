@@ -117,17 +117,18 @@ def inverse_expectation_function_extended(x, rho, c, T):
     Inverse function of cumulative hazard function.
     c is the number of lineages that overlap
     T is weighted time of nodes to last coalescence event.
+    Integral from 0 to t
     """
     d = T * rho
     t1 = 2 * c + d
     return (-t1 + math.sqrt(t1 ** 2 + 8 * x * rho)) / (2 * rho)
 
-def inverse_expectation_function_extended_bis(x, rho, c, T, L):
+def inverse_expectation_function_from_L(x, rho, c, T, L):
     """
     Inverse function of cumulative hazard function.
     c is the number of lineages that overlap
     T is weighted time of nodes to last coalescence event.
-    L is time of last event
+    L is time of last event: integral from L to L+t
     """
     d = (2*L + T) * rho    
     return (-d - 2*c + math.sqrt((4*c + d) * d + 4*c**2 + 8 * x * rho)) / (2 * rho)
@@ -150,47 +151,38 @@ def draw_event_time(num_pairs_overlap, rho, rng, T=0):
         s = rng.expovariate(1)
         return inverse_expectation_function_extended(s, rho, num_pairs_overlap, T)
 
-def draw_event_time_bis(num_pairs_overlap, rho, rng, T=0, L=0):
-    """
-    Given expected coalescence rate num_pairs_overlap + (2*t + T) * rho / 2),
-    draw single random value t from the non-homogeneous
-    exponential distribution
-    rho is the total overlap of all combinations expressed
-    in recombination rate units.
-
-    Inverse sampling formula for non-homogeneous exponential
-    given rate as described above.
-    T is the (weighted mean) time to the last coalescence event.
-    """
-    if rho == 0.0:
-        return rng.expovariate(num_pairs_overlap)
-    else:
-        s = rng.expovariate(1)
-        #s += coal_rate(num_pairs_overlap, rho, L, T)
-        return inverse_expectation_function_extended_bis(s, rho, num_pairs_overlap, T, L)
-
 def coal_rate(c, rho, t, T):
     return c + (2 * t + T) * rho / 2
 
-def draw_event_time_downsample(c, rho, rng, T=0, start_time=0, p=1, jump=0.1):
-    base = jump + start_time
-    sup_rate = coal_rate(c, rho, base, T)
+def draw_event_time_downsample(c, rho, rng, T=0, start_time=0, jump=0.1):
+    """
+    Algorithm from Introduction to Probability Models by Sheldon Ross.
+    """
+    upper_t_interval = jump + start_time
+    sup_rate = coal_rate(c, rho, upper_t_interval, T)
     new_time = start_time
+    w = rng.expovariate(sup_rate)
 
     while True:
-        while new_time < base:
-            w = rng.expovariate(sup_rate)
+        if new_time + w < upper_t_interval:
             new_time += w
             u = rng.uniform(0, 1)
             if u < coal_rate(c, rho, new_time, T) / sup_rate:
-                if rng.uniform(0, 1) <= p:
-                    return new_time
+                return new_time
+            w = rng.expovariate(sup_rate)
+        else:
+            adjust_w = w - upper_t_interval + new_time
+            new_time = upper_t_interval
+            upper_t_interval += jump
+            old_sup_rate = sup_rate
+            sup_rate = coal_rate(c, rho, upper_t_interval, T)
+            w = adjust_w * old_sup_rate / sup_rate
 
-        base += jump
-        sup_rate = coal_rate(c, rho, base, T)
-
-    return new_time
-
+def expected_fraction_observed_rec_events(n):
+    a_n = 0
+    for i in range(1, n):
+        a_n += 1/i
+    return 1 - 2 / (3 * a_n) * (1 - 1 / n)
 
 def intersect_lineages(a, b):
     """

@@ -81,6 +81,18 @@ class Test:
                 n, rho, L, seed=seed, rejection=rejection, expectation=expectation
             )
 
+    def sum_squared_residuals(self, a1, a2):
+        a1 = np.sort(a1)
+        a2 = np.sort(a2)
+        return np.sum((a1 - a2)**2)
+
+    def scatter(self, overlap, ssr_array, x_label, y_label, filename):
+        plt.scatter(overlap, ssr_array)
+        plt.xlabel(x_label)
+        plt.ylabel(y_label)
+        f = self._build_filename(filename)
+        plt.savefig(f, dpi=72)
+        plt.close("all")        
 
 class TestMargTBL(Test):
     """
@@ -930,22 +942,23 @@ class TestSingleStep(Test):
         
         # fix up generate_lineage_pair
         ts, pair = self.generate_lineage_pair(n, rho, L, run_until)
-        lineages, node_time_diff = self.ts_to_lineages(ts, pair)
-        last_event = max([l.node_time for l in lineages])
+        lineages = self.ts_to_lineages(ts, pair)
+        node_times = [l.node_time for l in lineages.values()]
+        node_time_diff = abs(node_times[0] - node_times[1])
+        last_event = run_until
+        oldest_node = max(node_times)
+        start_time_exp_process = last_event - oldest_node
         
-        overlap_intervals, overlap = sim.intersect_lineages(*lineages)
+        overlap_intervals, overlap = sim.intersect_lineages(*(lineages[p] for p in pair))
         overlap_rho = rho * overlap
         overlap_weighted_node_times = last_event
         
-        oldest_node = max([l.node_time for l in lineages])
-        last_event = run_until
-        start_time_exp_process = last_event - oldest_node
         rng = random.Random()
         
         for i in tqdm(range(num_replicates)):
             # coal_time_msp contains time from oldest node in pair to their first coalescence event along the genome
             coal_time_msp[i] = self.run_msp_single_step_pair(pair, rho, ts, run_until)
-            new_time = sim.draw_event_time_downsample(1, overlap_rho, rng, node_time_diff, start_time_exp_process)          
+            new_time = sim.draw_event_time_downsample(1, overlap_rho, rng, node_time_diff, start_time_exp_process) 
             coal_time_yaca[i] = new_time
 
         coal_time_msp -= oldest_node
@@ -957,34 +970,47 @@ class TestSingleStep(Test):
         rho = 1e-3
         L = 1e5
         num_replicates = 500
+        num_runs = 50
         run_until = 0.5
         param_str = f"n{n}_rho{rho}_L{L}"
-        
+        ssr_array = np.zeros(num_runs)
+        overlap = np.zeros_like(ssr_array)
+
+        for j in tqdm(range(num_runs)):
+            ssr, info = self.run_single_test_n2(n, rho, L, num_replicates, run_until, param_str, j)
+            ssr_array[j] = ssr
+            overlap[j] = info['overlap']
+        #self.scatter(overlap, ssr_array, 'overlap', 'ssr', f'n2_single_step_bis_{param_str}_ssr_overlap')
+
+    def run_single_test_n2(self, n, rho, L, num_replicates, run_until, param_str, j):
         coal_time_msp = np.zeros(num_replicates, dtype=np.float64)
         coal_time_yaca = np.zeros_like(coal_time_msp)
         ts = self.generate_lineages(n, rho, L, run_until)
         pair = (0, 1)
-        lineages, node_time_diff = self.ts_to_lineages(ts, pair)
-        
-        overlap_intervals, overlap = sim.intersect_lineages(*lineages)
+        lineages = self.ts_to_lineages(ts, pair)
+        assert all(l.node_time==0 for l in lineages.values())
+        node_time_diff = 0
+        overlap_intervals, overlap = sim.intersect_lineages(*(lineages[p] for p in pair))
         overlap_rho = rho * overlap
-        print('overlap:', overlap)
 
-        oldest_node = max([l.node_time for l in lineages])
+        oldest_node = max([l.node_time for l in lineages.values()])
         last_event = run_until
         start_time_exp_process = last_event - oldest_node
 
         rng = random.Random()
-        for i in tqdm(range(num_replicates)):
+        for i in tqdm(range(num_replicates), disable=True):
             # contains time to first node coalesced after
-            coal_time_msp[i] = self.run_msp_single_step_pair(pair, rho, ts, run_until)
-            # new time is absolute time relative to oldest_node 
+            coal_time_msp[i] = self.run_msp_single_step_pair(pair, rho, ts, run_until) 
             new_time = sim.draw_event_time_downsample(1, overlap_rho, rng, node_time_diff, start_time_exp_process)
             coal_time_yaca[i] = new_time
-
+        
+        # oldest_node time is treated as zero
         coal_time_msp -= oldest_node
-        info = self.make_info_str({'overlap': round(overlap), 'num_segments': len(overlap_intervals)})
-        self.plot_qq(coal_time_yaca, coal_time_msp, 'yaca', 'msp', f"n2_single_step_{param_str}", info)
+        info_dict = {'overlap': round(overlap), 'num_segments': len(overlap_intervals)}
+        info = self.make_info_str(info_dict)
+        self.plot_qq(coal_time_yaca, coal_time_msp, 'yaca', 'msp', f"n2_single_step_{param_str}_{j}", info)
+        
+        return self.sum_squared_residuals(coal_time_msp, coal_time_yaca), info_dict
 
     def make_info_str(self, kwargs):
         result = ""
@@ -996,7 +1022,6 @@ class TestSingleStep(Test):
         lineages = dict()
     
         num_samples = ts.num_samples
-        last_coal_event = np.max(ts.nodes_time)
 
         for tree in ts.trees():
             for root in tree.roots:
@@ -1016,10 +1041,9 @@ class TestSingleStep(Test):
                             lineages[root].ancestry.append(new_ancestry_interval)
             
         if isinstance(idxs, Iterable):
-            last_coal_event = abs(ts.nodes_time[idxs[0]] - ts.nodes_time[idxs[1]])
-            return [lineages[i] for i in idxs], last_coal_event
+            return {i: lineages[i] for i in idxs}
 
-        return list(lineages.values()), last_coal_event
+        return lineages
 
     def generate_lineages(self, n, rho, L, run_until):
         ret = False
@@ -1049,7 +1073,7 @@ class TestSingleStep(Test):
         old_time = simulator.time
         # extract time to next coalescence
         new_time = old_time
-        num_nodes = simulator.num_nodes
+        num_nodes = simulator.num_nodessour
         while simulator.num_nodes == num_nodes:
             new_time += time_step
             simulator._run_until(new_time)
