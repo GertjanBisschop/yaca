@@ -121,7 +121,8 @@ def inverse_expectation_function_extended(x, rho, c, T):
     """
     d = T * rho
     t1 = 2 * c + d
-    return (-t1 + math.sqrt(t1 ** 2 + 8 * x * rho)) / (2 * rho)
+    return (-t1 + math.sqrt(t1**2 + 8 * x * rho)) / (2 * rho)
+
 
 def inverse_expectation_function_from_L(x, rho, c, T, L):
     """
@@ -130,8 +131,11 @@ def inverse_expectation_function_from_L(x, rho, c, T, L):
     T is weighted time of nodes to last coalescence event.
     L is time of last event: integral from L to L+t
     """
-    d = (2*L + T) * rho    
-    return (-d - 2*c + math.sqrt((4*c + d) * d + 4*c**2 + 8 * x * rho)) / (2 * rho)
+    d = (2 * L + T) * rho
+    return (-d - 2 * c + math.sqrt((4 * c + d) * d + 4 * c**2 + 8 * x * rho)) / (
+        2 * rho
+    )
+
 
 def draw_event_time(num_pairs_overlap, rho, rng, T=0):
     """
@@ -151,12 +155,18 @@ def draw_event_time(num_pairs_overlap, rho, rng, T=0):
         s = rng.expovariate(1)
         return inverse_expectation_function_extended(s, rho, num_pairs_overlap, T)
 
+
 def coal_rate(c, rho, t, T):
     return c + (2 * t + T) * rho / 2
 
+
 def draw_event_time_downsample(c, rho, rng, T=0, start_time=0, jump=0.1):
     """
-    Algorithm from Introduction to Probability Models by Sheldon Ross.
+    Algorithm to draw the first interevent time for a
+    non-homogeneous poisson process. Algorithm adapted
+    from Introduction to Probability Models by Sheldon Ross.
+
+    start_time = time between oldest node and last event.
     """
     upper_t_interval = jump + start_time
     sup_rate = coal_rate(c, rho, upper_t_interval, T)
@@ -178,11 +188,13 @@ def draw_event_time_downsample(c, rho, rng, T=0, start_time=0, jump=0.1):
             sup_rate = coal_rate(c, rho, upper_t_interval, T)
             w = adjust_w * old_sup_rate / sup_rate
 
+
 def expected_fraction_observed_rec_events(n):
     a_n = 0
     for i in range(1, n):
-        a_n += 1/i
+        a_n += 1 / i
     return 1 - 2 / (3 * a_n) * (1 - 1 / n)
+
 
 def intersect_lineages(a, b):
     """
@@ -335,14 +347,16 @@ def update_total_overlap_brute_force(lineages, last_event):
         total += overlap_length
         if overlap_length > 0:
             pairs_count += 1
-            overlap_weighted_node_times += (overlap_length * sum(last_event - n.node_time for n in (lineages[a],lineages[b])))
+            overlap_weighted_node_times += overlap_length * sum(
+                last_event - n.node_time for n in (lineages[a], lineages[b])
+            )
             pairwise_overlap_counter[a] += 1
             pairwise_overlap_counter[b] += 1
     if total > 0:
         overlap_weighted_node_times /= total
     else:
         overlap_weighted_node_times = math.inf
-    
+
     return total, overlap_weighted_node_times, pairs_count, pairwise_overlap_counter
 
 
@@ -385,7 +399,7 @@ def sample_pairwise_times(lineages, rng, time_last_event, rho):
     non_zero_times = np.nonzero(pairwise_times)[0]
     return pairwise_times[non_zero_times]
     selected_idx = non_zero_times[np.argmin(pairwise_times[non_zero_times])]
-    
+
     a, b = reverse_combinadic_map(selected_idx)
     overlap, overlap_length = intersect_lineages(lineages[a], lineages[b])
 
@@ -474,7 +488,11 @@ def sim_yaca(n, rho, L, seed=None, rejection=True, verbose=False, expectation=Tr
             lineages.append(c)
 
         # update total_overlap
-        total_overlap, overlap_weighted_node_times, num_pairs_overlap = update_total_overlap_brute_force(lineages, t)
+        (
+            total_overlap,
+            overlap_weighted_node_times,
+            num_pairs_overlap,
+        ) = update_total_overlap_brute_force(lineages, t)
         if verbose:
             check_progress(lineages, total_overlap)
 
