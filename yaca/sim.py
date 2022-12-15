@@ -156,11 +156,11 @@ def draw_event_time(num_pairs_overlap, rho, rng, T=0):
         return inverse_expectation_function_extended(s, rho, num_pairs_overlap, T)
 
 
-def coal_rate(c, rho, t, T):
-    return c + (2 * t + T) * rho / 2
+def coal_rate(c, rho, t, T, p):
+    return (c + (2 * t + T) * rho / 2) * p
 
 
-def draw_event_time_downsample(c, rho, rng, T=0, start_time=0, jump=0.1):
+def draw_event_time_downsample(c, rho, rng, T=0, start_time=0, jump=0.1, p=1):
     """
     Algorithm to draw the first interevent time for a
     non-homogeneous poisson process. Algorithm adapted
@@ -169,7 +169,7 @@ def draw_event_time_downsample(c, rho, rng, T=0, start_time=0, jump=0.1):
     start_time = time between oldest node and last event.
     """
     upper_t_interval = jump + start_time
-    sup_rate = coal_rate(c, rho, upper_t_interval, T)
+    sup_rate = coal_rate(c, rho, upper_t_interval, T, p)
     new_time = start_time
     w = rng.expovariate(sup_rate)
 
@@ -177,7 +177,7 @@ def draw_event_time_downsample(c, rho, rng, T=0, start_time=0, jump=0.1):
         if new_time + w < upper_t_interval:
             new_time += w
             u = rng.uniform(0, 1)
-            if u < coal_rate(c, rho, new_time, T) / sup_rate:
+            if u < coal_rate(c, rho, new_time, T, p) / sup_rate:
                 return new_time
             w = rng.expovariate(sup_rate)
         else:
@@ -185,7 +185,7 @@ def draw_event_time_downsample(c, rho, rng, T=0, start_time=0, jump=0.1):
             new_time = upper_t_interval
             upper_t_interval += jump
             old_sup_rate = sup_rate
-            sup_rate = coal_rate(c, rho, upper_t_interval, T)
+            sup_rate = coal_rate(c, rho, upper_t_interval, T, p)
             w = adjust_w * old_sup_rate / sup_rate
 
 

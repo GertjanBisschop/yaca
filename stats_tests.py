@@ -278,7 +278,7 @@ class TestRecombination(Test):
             intervals.append(new + intervals[-1])
         return intervals
 
-    def no_test_pick_segment_function(self):
+    def test_pick_segment_function(self):
         """
         Generate intervals and split intervals randomly
         given recombination rate and verify whether the
@@ -314,7 +314,7 @@ class TestRecombination(Test):
             tract_lengths, exp, "obs", "exp", f"tract_lengths_pick_segments_qq_n{n}"
         )
 
-    def no_test_pick_segment_function2(self):
+    def test_pick_segment_function2(self):
         "node times of both lineages differ"
         L = 1e5
         n = 2
@@ -367,19 +367,10 @@ class TestRecombination(Test):
             num_trees_yaca,
         ) = self.sample_yaca_tree_stats(n, rho, L, num_reps, rejection, expectation)
 
-        # self.plot_qq(
-        #    tree_span_yaca, tree_span_yaca_exp, "yaca", "exp", "marginal_tree_span_yaca_yaca_exp"
-        # )
-        # self.plot_qq(
-        #    tree_span_yaca_exp, tree_span_exp, "yaca", "exp", "marginal_tree_span_yaca_exp_exp"
-        # )
-        # self.plot_qq(
-        #    tree_span_yaca, tree_span_exp, "yaca", "exp", "marginal_tree_span_yaca_exp"
-        # )
         tree_span_hudson, num_trees_hudson = self.sample_hudson_tree_stats(
             n, rho, L, num_reps
         )
-        # self.plot_qq(tree_span_exp, tree_span_hudson, 'exp', 'hudson', 'marginal_tree_span_exp_hudson')
+        
         self.plot_qq(
             tree_span_yaca,
             tree_span_hudson,
@@ -493,7 +484,7 @@ class TestRecAgainstMsp(Test):
         )
         # self.plot_qq(num_trees_yaca, num_trees_msp, "yaca", "msp", f"num_trees_n{n}")
 
-    def no_test_num_trees_yaca(self):
+    def test_num_trees_yaca(self):
         n = 2
         L = 5e4
         rho = 1e-4
@@ -796,208 +787,157 @@ class TestWaitingTimes(Test):
         return sim.Lineage(i, ancestry, node_time)
 
 
-class TestFoo(Test):
-    def no_test_foo(self):
-        n = 2
-        rho = 1e-4
-        L = 1e4
-        num_replicates = 10
-        rejection = True
-        max_trees = 0
-        for i, (ts, seed) in enumerate(
-            self.run_yaca(rho, L, n, num_replicates, rejection)
-        ):
-            print(seed, ts.num_trees)
-            max_trees = max(ts.num_trees, max_trees)
-        print("yaca_max_trees:", max_trees)
-
-    def test_num_breakpoints(self):
-        n = 2
-        rho = 1e-4
-        L = 5e4
-        Ne = 1e4
-        r = rho / (4 * Ne)
-
-        print("4Ner * L:", rho * L)
-        reps = 5
-        num_trees = np.zeros(reps, dtype=np.int64)
-        for i in tqdm(range(reps), "running yaca"):
-            seed = random.randint(1, 2**16)
-            ts = sim.sim_yaca(n, rho, L, seed=seed)
-            ts_msp = msprime.sim_ancestry(
-                samples=2,
-                ploidy=1,
-                sequence_length=L,
-                recombination_rate=rho,
-                model="SMC",
-            )
-            # print(ts.draw_text())
-            print(ts_msp.draw_text())
-            num_trees[i] = ts.num_trees
-        num_breakpoints = num_trees - 1
-        self.plot_histogram(num_trees, "num_trees", f"histogram_n{n}")
-
-        num_trees_msp = self.msp_num_breakpoints(n, r, Ne, L, reps)
-        self.plot_qq(num_trees, num_trees_msp, "yaca", "msp", f"qq_num_trees_n{n}")
-        self.verify_breakpoint_distribution(num_breakpoints, rho, L)
-
-    def no_test_run_with_seed(self):
-        # expected number of breakpoints: 4*Ne*r*L = 5
-        n = 2
-        rho = 1e-4
-        L = 5e4
-
-        seed = 44883
-        ts = sim.sim_yaca(n, rho, L, seed=seed)
-        print(ts.num_trees)
-        print(list(ts.breakpoints()))
-
-    def msp_num_breakpoints(self, n, r, Ne, L, num_replicates):
-        # IMPORTANT!! We have to use the get_num_breakpoints method
-        # on the simulator as there is a significant drop in the number
-        # of trees if we use the tree sequence. There is a significant
-        # number of common ancestor events that result in a recombination
-        # being undone.
-        num_trees = np.zeros(num_replicates, dtype=np.int64)
-        # ploidy is 2, see msprime.ancestry l374
-        exact_sim = msprime.ancestry._parse_simulate(
-            sample_size=n, recombination_rate=r, Ne=Ne, length=L
-        )
-        for k in tqdm(range(num_replicates), desc="Running msprime"):
-            exact_sim.run()
-            num_trees[k] = exact_sim.num_breakpoints
-            exact_sim.reset()
-        return num_trees
-
-    def verify_breakpoint_distribution(self, x, rho, L):
-        scipy.stats.probplot(x, dist=scipy.stats.poisson(rho * L), plot=plt)
-        path = self.output_dir / f"num_breakpoints_analytical_qq.png"
-        plt.savefig(path)
-        plt.close("all")
-
-    def no_test_foo_3(self):
-        a = [
-            (0, 2238.0, 1),
-            (37933.0, 37949.0, 1),
-            (40696.0, 40882.0, 1),
-            (49653.0, 50000.0, 1),
-        ]
-        a = [
-            sim.AncestryInterval(left, right, ancestral_to)
-            for left, right, ancestral_to in a
-        ]
-        b = [
-            (0, 2238.0, 1),
-            (37933.0, 37949.0, 1),
-            (40696.0, 40882.0, 1),
-            (49653.0, 50000.0, 1),
-        ]
-        a = [
-            sim.AncestryInterval(left, right, ancestral_to)
-            for left, right, ancestral_to in b
-        ]
-        n = 2
-        rho = 1e-4
-        L = 5e4
-        total_overlap = 2787.0
-        for _ in range(10):
-            seed = random.randint(0, 2**16)
-            left, right = sim.pick_breakpoints(a, total_overlap, rho, 2, (0, 0), seed)
-            print(left, right)
-
-
 class TestSingleStep(Test):
     def test_all_single_step(self):
-        # self._test_single()
-        seeds = []
-        idxs = [10]
-        if len(idxs) > 0:
-            with open(
-                self._build_filename(
-                    "test_single_pair_n16_testrun1/log_random_pair_n16_rho0.001_L100000.0_ru1.5",
-                    ".tsv",
-                ),
-                "r",
-            ) as logfile:
-                logfile.readline()
-                for line in logfile:
-                    read_line = line.rstrip().split("\t")
-                    if int(read_line[0]) in idxs:
-                        seeds.append(int(read_line[1]))
-        print(seeds)
-        self._test_single_pair_n16(seeds)
+        self._test_single()
+        #seeds = []
+        #idxs = [10]
+        #if len(idxs) > 0:
+        #    with open(
+        #        self._build_filename(
+        #            "test_single_pair_n16_testrun1/log_random_pair_n16_rho0.001_L100000.0_ru1.5",
+        #            ".tsv",
+        #        ),
+        #        "r",
+        #    ) as logfile:
+        #        logfile.readline()
+        #        for line in logfile:
+        #            read_line = line.rstrip().split("\t")
+        #            if int(read_line[0]) in idxs:
+        #                seeds.append(int(read_line[1]))
+        #print(seeds)
+        #self._test_single_pair_n16(seeds)
+        #self._test_single_pair_n16()
         # self._test_single_n2()
 
-    def _test_single(self, seed=None):
+    def _test_single(self, seeds=None):
         n = 16
         rho = 1e-3
         L = 1e5
         num_replicates = 500
-        run_until = 2.5
-        param_str = f"n{n}_rho{rho}_L{L}"
-        k = 2
-
-        coal_time_msp = np.zeros(num_replicates, dtype=np.float64)
-        coal_time_yaca = np.zeros_like(coal_time_msp)
-
-        seeds = self.get_seeds(num_replicates)
-        ts = self.generate_lineages(n, rho, L, run_until)
-        lineages, last_event = self.ts_to_lineages(ts)
-        (
-            total,
-            overlap_weighted_node_times,
-            pairs_count,
-            pairwise_overlap_counter,
-        ) = sim.update_total_overlap_brute_force(lineages, last_event)
-        total_overlap_rho = total * rho
-
-        for i in tqdm(range(num_replicates)):
-            coal_time_msp[i] = self.run_msp_single_step(rho, ts, run_until)
-            coal_time_yaca[i] = self.draw_waiting_time_yaca(
-                seeds[i],
-                run_until,
-                last_event,
-                total_overlap_rho,
-                overlap_weighted_node_times,
-                pairs_count,
-            )
-
-        self.plot_qq(
-            coal_time_yaca,
-            coal_time_msp,
-            "yaca",
-            "msp",
-            f"simpl_single_step_{param_str}",
-        )
-
-    def _test_single_pair_n16(self, seeds=None):
-        n = 16
-        rho = 1e-3
-        L = 1e5
-        num_replicates = 10
         if isinstance(seeds, Iterable):
             num_runs = len(seeds)
             self.seeds = seeds
         else:
-            num_runs = 50
+            num_runs = 10
             self.seeds = self.get_seeds(num_runs)
-        run_until = 1.5
-        param_str = f"random_pair_n{n}_rho{rho}_L{L}_ru{run_until}"
-        info_labels = ["num_extant_lineages", "overlap", "num_segments", "num_trees"]
+        run_until = 1.0
+        param_str = f"first_coal_n{n}_rho{rho}_L{L}_ru{run_until}"
+        info_labels = ["num_extant_lineages", "overlap", "num_trees", "diff_nonu_roots"]
         info_size = len(info_labels)
         log_info = np.zeros((num_runs, info_size))
-        self.set_output_dir(self.output_dir, "test_single_pair_n16")
+        self.set_output_dir(self.output_dir, "test_first_coalescence_n16")
 
         for j in tqdm(range(num_runs)):
             log_info[j] = self.run_single_test(
-                n, rho, L, num_replicates, run_until, param_str, j
+                n, rho, L, num_replicates, run_until, param_str, j,
             )
         self.log_run(param_str, info_labels, log_info)
 
     def run_single_test(self, n, rho, L, num_replicates, run_until, param_str, j):
         coal_time_msp = np.zeros(num_replicates, dtype=np.float64)
         coal_time_yaca = np.zeros_like(coal_time_msp)
-        rng = random.Random(self.seeds[j])
+        rng = random.Random(self.seeds[j])    
+        ts = self.generate_lineages(n, rho, L, run_until, rng)
+        lineages = list(self.ts_to_lineages(ts).values())
+        num_extant_lineages = len(lineages)
+        pairwise_overlap = self._pairwise_overlap(lineages)
+        different_non_unary_roots = len(self.get_non_unary_roots(ts))
+        rate_adjustor = different_non_unary_roots/len(lineages)
+
+        for i in tqdm(range(num_replicates), disable=True):
+            # contains time to first node coalesced after
+            coal_time_msp[i] = self.run_msp_single_step(
+                rho, ts, rng, run_until
+            )
+            new_time, pair_idx = self._sample_pairwise_times(
+                lineages, pairwise_overlap, rng, run_until, rho, rate_adjustor
+            )
+            coal_time_yaca[i]= new_time
+
+        info_dict = {
+            "num_extant_lineages": num_extant_lineages,
+            "overlap": round(pairwise_overlap[pair_idx]),
+            "num_trees": ts.num_trees,
+            "diff_nonu_roots": different_non_unary_roots,
+        }
+        info = self.make_info_str(info_dict)
+        self.plot_qq(
+            coal_time_yaca,
+            coal_time_msp,
+            "yaca",
+            "msp",
+            f"first_coalescence_{param_str}_{j}",
+            info,
+        )
+        return list(info_dict.values())
+
+    def _pairwise_overlap(self, lineages):
+        num_lineages = len(lineages)
+        pairwise_overlap = np.zeros(math.comb(num_lineages, 2), dtype=np.float64)
+        for a, b in itertools.combinations(range(num_lineages), 2):
+            _, overlap_length = sim.intersect_lineages(lineages[a], lineages[b])
+            idx = sim.combinadic_map((a, b))
+            pairwise_overlap[idx] = overlap_length
+        return pairwise_overlap
+
+    def _sample_pairwise_times(self, lineages, pairwise_overlap, rng, last_event, rho, p):
+        assert p <= 1
+        num_lineages = len(lineages)
+        pairwise_times = np.zeros(math.comb(num_lineages, 2), dtype=np.float64)
+        lower_rec_fraction = sim.expected_fraction_observed_rec_events(2)
+        
+        for idx in range(len(pairwise_times)):
+            overlap_length = pairwise_overlap[idx]
+            if overlap_length > 0:
+                a, b = list(sim.reverse_combinadic_map(idx))
+                node_time_diff = abs(lineages[a].node_time - lineages[b].node_time)
+                oldest_node = max(lineages[a].node_time, lineages[b].node_time)
+                start_time_exp_process = last_event - oldest_node
+                new_event_time = sim.draw_event_time_downsample(
+                    1,
+                    rho * overlap_length * lower_rec_fraction,
+                    rng,
+                    T=node_time_diff,
+                    start_time=start_time_exp_process,
+                    p=p,
+                    )
+                new_event_time -= start_time_exp_process
+                pairwise_times[idx] = new_event_time
+
+        non_zero_times = np.nonzero(pairwise_times)[0]
+        selected_idx = non_zero_times[np.argmin(pairwise_times[non_zero_times])]
+        return pairwise_times[selected_idx], selected_idx
+
+    def _test_single_pair_n16(self, seeds=None):
+        n = 16
+        rho = 1e-3
+        L = 1e5
+        num_replicates = 500
+        if isinstance(seeds, Iterable):
+            num_runs = len(seeds)
+            self.seeds = seeds
+        else:
+            num_runs = 10
+            self.seeds = self.get_seeds(num_runs)
+        run_until = 1.5
+        param_str = f"random_pair_n{n}_rho{rho}_L{L}_ru{run_until}"
+        #info_labels = ["num_extant_lineages", "overlap", "num_segments", "num_trees"]
+        info_labels = ["overlap", "num_trees"]
+        info_size = len(info_labels)
+        log_info = np.zeros((num_runs, info_size))
+        self.set_output_dir(self.output_dir, "test_single_pair_n16")
+
+        for j in tqdm(range(num_runs)):
+            log_info[j] = self.run_single_test_pair(
+                n, rho, L, num_replicates, run_until, param_str, j
+            )
+        self.log_run(param_str, info_labels, log_info)
+
+    def run_single_test_pair(self, n, rho, L, num_replicates, run_until, param_str, j):
+        coal_time_msp = np.zeros(num_replicates, dtype=np.float64)
+        coal_time_yaca = np.zeros_like(coal_time_msp)
+        rng = random.Random(self.seeds[j])    
         ts, pair = self.generate_lineage_pair(n, rho, L, run_until, rng)
         lineages = self.ts_to_lineages(ts)
         num_extant_lineages = len(lineages)
@@ -1148,27 +1088,13 @@ class TestSingleStep(Test):
 
         return lineages
 
-    def ts_to_lineages_samples(self, ts, idxs=None):
-        lineages = dict()
-
+    def get_non_unary_roots(self, ts):
+        found = set()
         for tree in ts.trees():
             if tree.num_roots > 1:
-                span = tree.span
-                old_root, new_root = -1, -1
                 for root in tree.roots:
-                    new_root = root
-                    if old_root != -1:
-                        for pair in itertools.product(
-                            tree.samples(old_root), tree.samples(new_root)
-                        ):
-                            pair = tuple(sorted(pair))
-                            lineages[pair] = lineages.get(pair, 0) + span
-                    old_root = new_root
-
-        if isinstance(idxs, Iterable):
-            return {i: lineages[i] for i in idxs}
-
-        return lineages
+                    found.add(root)
+        return found
 
     def generate_lineages(self, n, rho, L, run_until, rng):
         ret = False
@@ -1189,44 +1115,24 @@ class TestSingleStep(Test):
 
         return ts
 
-    def run_msp_single_step(self, rho, ts, sim_start_time, time_step=0.5):
-        simulator = msprime.ancestry._parse_sim_ancestry(
-            recombination_rate=rho / 2,
-            ploidy=1,
-            discrete_genome=False,
-            population_size=1,
-            initial_state=ts,
-        )
-        old_time = simulator.time
-        # extract time to next coalescence
-        new_time = old_time
-        num_nodes = simulator.num_nodessour
-        while simulator.num_nodes == num_nodes:
-            new_time += time_step
-            simulator._run_until(new_time)
+    def run_msp_single_step(self, rho, ts, rng, sim_start_time):
+        new_seed = rng.randint(1, 2**16)
+        ts_new = msprime.sim_ancestry(
+                recombination_rate=rho / 2,
+                ploidy=1,
+                discrete_genome=False,
+                population_size=1,
+                initial_state=ts,
+                random_seed=new_seed,
+            )
 
-        tables = tskit.TableCollection.fromdict(simulator.tables.asdict())
-        tables.simplify()  # does simplification have an unwanted impact here?
-        times = tables.nodes.time
-        last_coal_idx = np.sum(times <= old_time)
+        old_time = ts.max_root_time
+        assert old_time == sim_start_time
+        times = ts_new.nodes_time
+        last_coal_idx = np.sum(times <= sim_start_time)
+        assert times[last_coal_idx - 1] == sim_start_time
+        assert times[last_coal_idx] > sim_start_time
         return times[last_coal_idx] - times[last_coal_idx - 1]
-
-    def draw_waiting_time_yaca(
-        self,
-        seed,
-        sim_until,
-        last_event,
-        total_overlap_rho,
-        overlap_weighted_node_times,
-        pairs_count,
-    ):
-        time_last_event = sim_until
-
-        rng = random.Random(seed)
-        new_time = sim.draw_event_time(
-            pairs_count, total_overlap_rho, rng, overlap_weighted_node_times
-        )
-        return new_time + (time_last_event - last_event)
 
     def generate_lineage_pair(self, n, rho, L, run_until, rng):
         ret = True
@@ -1234,15 +1140,6 @@ class TestSingleStep(Test):
         while ret:
             ts = self.generate_lineages(n, rho, L, run_until, rng)
             pair = self.find_pair(ts, rng)
-            ret = max(pair) == -1
-        return ts, pair
-
-    def generate_lineage_pair_samples(self, n, rho, L, run_until, rng):
-        ret = True
-
-        while ret:
-            ts = self.generate_lineages(n, rho, L, run_until, rng)
-            pair = self.find_pair_samples(ts, rng)
             ret = max(pair) == -1
         return ts, pair
 
@@ -1265,24 +1162,6 @@ class TestSingleStep(Test):
         idx = rng.randrange(len(S))
         return S[idx]
 
-    def find_pair_samples(self, ts, rng):
-
-        S = set()
-        for tree in ts.trees():
-            if tree.num_roots > 1:
-                temp = []
-                for root in tree.roots:
-                    for s in tree.samples(root):
-                        temp.add(s)
-                for comb in itertools.combinations(temp, 2):
-                    S.add(tuple(sorted(comb)))
-
-        S = list(S)
-        if len(S) == 0:
-            return (-1, -1)
-        idx = rng.randrange(len(S))
-        return S[idx]
-
     def find_pair_coalesced(self, ts, pair, after=0.0):
         """
         Returns smallest node time for parent of pair after time after
@@ -1293,17 +1172,6 @@ class TestSingleStep(Test):
                 node_time_parent = tree.time(tree.parent(pair[0]))
                 if node_time_parent > after:
                     temp = min(temp, node_time_parent)
-        return temp
-
-    def find_pair_coalesced_samples(self, ts, pair, after=0.0):
-        """
-        Returns smallest node time for parent of pair after time after
-        """
-        temp = math.inf
-        for tree in ts.trees():
-            local_tmrc = tree.tmrca(*pair)
-            if local_tmrc > after:
-                temp = min(temp, node_time_parent)
         return temp
 
     def run_msp_single_step_pair(self, pair, rho, ts, rng, resume_at=0.0):
@@ -1321,22 +1189,6 @@ class TestSingleStep(Test):
             ts_new, node_map = ts_new.simplify(map_nodes=True)
             new_pair = [node_map[i] for i in pair]
             temp = self.find_pair_coalesced(ts_new, new_pair, resume_at)
-
-        return temp
-
-    def run_msp_single_step_pair_samples(self, pair, rho, ts, rng, resume_at=0.0):
-        temp = math.inf
-        while temp == math.inf:
-            new_seed = rng.randint(1, 2**16)
-            ts_new = msprime.sim_ancestry(
-                recombination_rate=rho / 2,
-                ploidy=1,
-                discrete_genome=False,
-                population_size=1,
-                initial_state=ts,
-                random_seed=new_seed,
-            )
-            temp = self.find_pair_coalesced_samples(ts_new, pair, resule_at)
 
         return temp
 
@@ -1367,7 +1219,6 @@ def main():
         "TestWaitingTimes",
         "TestVisualize",
         "TestAgainstSmc",
-        "TestFoo",
         "TestSingleStep",
     ]
 
