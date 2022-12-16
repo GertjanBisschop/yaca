@@ -385,25 +385,33 @@ def sample_pairwise_rates(lineages, t, rho, rng):
     return a, b, overlap, overlap_length
 
 
-def sample_pairwise_times(lineages, rng, time_last_event, rho):
+def sample_pairwise_times(lineages, rng, time_last_event, rho, p=1):
     num_lineages = len(lineages)
     pairwise_times = np.zeros(math.comb(num_lineages, 2), dtype=np.float64)
-    for a, b in itertools.combinations(range(num_lineages), 2):
+
+    for idx in range(len(pairwise_times)):
         _, overlap_length = intersect_lineages(lineages[a], lineages[b])
         if overlap_length > 0:
-            T = 2 * time_last_event - (lineages[a].node_time + lineages[b].node_time)
-            new_event_time = draw_event_time(1, rho * overlap_length, rng, T)
-            pairwise_times[combinadic_map((a, b))] = new_event_time
+            a, b = list(sim.reverse_combinadic_map(idx))
+            node_time_diff = abs(lineages[a].node_time - lineages[b].node_time)
+            oldest_node = max(lineages[a].node_time, lineages[b].node_time)
+            start_time_exp_process = time_last_event - oldest_node
+            new_event_time = sim.draw_event_time_downsample(
+                1,
+                rho * overlap_length,
+                rng,
+                T=node_time_diff,
+                start_time=start_time_exp_process,
+                p=p,
+                )
+            new_event_time -= start_time_exp_process
+            pairwise_times[idx] = new_event_time
 
     # pick pair with smallest new_event_time
     non_zero_times = np.nonzero(pairwise_times)[0]
-    return pairwise_times[non_zero_times]
     selected_idx = non_zero_times[np.argmin(pairwise_times[non_zero_times])]
 
-    a, b = reverse_combinadic_map(selected_idx)
-    overlap, overlap_length = intersect_lineages(lineages[a], lineages[b])
-
-    return a, b, overlap, overlap_length, pairwise_times[selected_idx]
+    return tuple(reverse_combinadic_map(selected_idx)), pairwise_times[selected_idx]
 
 
 def sample_rejection(lineages, rng):
@@ -416,7 +424,7 @@ def sample_rejection(lineages, rng):
     return a, b, overlap, overlap_length
 
 
-def sim_yaca(n, rho, L, seed=None, rejection=True, verbose=False, expectation=True):
+def sim_yaca(n, rho, L, seed=None, rejection=False, verbose=False):
     rng = random.Random(seed)
     rng_numpy = np.random.default_rng(seed)
     tables = tskit.TableCollection(L)
@@ -437,32 +445,18 @@ def sim_yaca(n, rho, L, seed=None, rejection=True, verbose=False, expectation=Tr
 
     while total_overlap > 0:
         # draw new event time and sample lineages
-        # either based on mean time to last event (expectation)
-        # or based on pairwise rates
-        if expectation:
-            # use overlap_weighted_node_times to draw new value
-            new_event_time = draw_event_time(
-                num_pairs_overlap, total_overlap * rho, rng, overlap_weighted_node_times
-            )
-            t += new_event_time
-
-            if rejection:
-                a, b, overlap, overlap_length = sample_rejection(lineages, rng)
-            else:
-                a, b, overlap, overlap_length = sample_pairwise_rates(
-                    lineages, t, rho, rng
-                )
-
-        else:
-            a, b, overlap, overlap_length, new_event_time = sample_pairwise_times(
-                lineages, rng, t, rho
-            )
-            t += new_event_time
+        #rec_rate_adj = expected_fraction_observed_rec_events(len(lineages))
+        rec_rate_adj = 1
+        (a, b), new_event_time = sample_pairwise_times(
+            lineages, rng, t, rho * rec_rate_adj
+        )
+        t += new_event_time
+        overlap, overlap_length = intersect_lineages(lineages[a], lineages[b])
 
         if verbose:
             print("coalescing lineages:", lineages[a].node, lineages[b].node)
         node_times = (lineages[a].node_time, lineages[b].node_time)
-        coalesced_segment = pick_segment(overlap, rho, t, node_times, rng_numpy)
+        coalesced_segment = pick_segment(overlap, rho * rec_rate_adj, t, node_times, rng_numpy)
         c = Lineage(len(nodes), coalesced_segment, t)
         for interval in coalesced_segment:
             for lineage in lineages[a], lineages[b]:

@@ -74,11 +74,10 @@ class Test:
         max_seed = 2**16
         return rng.integers(1, max_seed, size=num_replicates)
 
-    def run_yaca(self, rho, L, n, num_replicates, rejection, expectation):
-        seeds = self.get_seeds(num_replicates)
+    def run_yaca(self, n, rho, L, seeds):
         for seed in tqdm(seeds, desc="Running yaca"):
             yield sim.sim_yaca(
-                n, rho, L, seed=seed, rejection=rejection, expectation=expectation
+                n, rho, L, seed=seed
             )
 
     def sum_squared_residuals(self, a1, a2):
@@ -100,155 +99,89 @@ class TestMargTBL(Test):
     Test marginal total branch length
     """
 
-    def no_test_tbl(self):
-        rho = 7.5e-4
+    def test_tbl(self, seed=None):
+        
+        rho =  7.5e-4
         L = 1000
-        param_str = f"L_{L}_rho_{rho}_ownt"
-        num_replicates = 500
 
         for n in [2, 4, 8]:
-            # expecation based coalescence rates
-            for rejection in True, False:
-                self.verify_single_model(
-                    rho, L, n, num_replicates, rejection, param_str=param_str
-                )
-            # same tests for pairwise rates
-            self.verify_single_model(
-                rho,
-                L,
-                n,
-                num_replicates,
-                rejection=False,
-                expectation=False,
-                param_str=param_str,
-            )
-
-    def test_tbl2(self):
-        rho = 5e-4
-        L = 1e5
-        param_str = f"L_{L}_rho_{rho}_ownt"
-        num_replicates = 500
-        for n in [2, 4, 8]:
-            # expecation based coalescence rates
-            for rejection in True, False:
-                self.verify_single_model(
-                    rho, L, n, num_replicates, rejection, param_str=param_str
-                )
-            # same tests for pairwise rates
-            # self.verify_single_model(
-            #    rho, L, n, num_replicates, rejection=False, expectation=False, param_str=param_str
-            # )
+            self.verify_single_model(n, rho, L, 500, seed)
 
     def verify_single_model(
-        self, rho, L, n, num_replicates, rejection=True, expectation=True, param_str=""
+        self, n, rho, L, num_replicates
     ):
-        trt, tbl, t1, tn = self.get_marginal_tree_stats(
-            rho, L, n, num_replicates, rejection, expectation
+        param_str = f"L_{L}_rho_{rho}_n{n}"
+        tree_stats = self.get_all_marginal_tree_stats(
+            n, rho, L, num_replicates,
         )
-        if expectation:
-            model = "rejection" if rejection else "weighted"
-        else:
-            model = "pairwise"
-        self.verify_marginal_tree_stats(trt, tbl, n, model, t1, tn, param_str)
+        rng = np.random.default_rng(seed)
+        self.verify_marginal_tree_stats(tree_stats, n, rng, param_str)
 
-    def no_test_run_specific_seeds(self):
-        n = 8
-        parameters = {
-            "rho": 7.5e-4,
-            "L": 1000,
-        }
-        num_replicates = 500
-
-        seeds = [54918]
-        for seed in seeds:
-            ts = sim.sim_yaca(
-                n,
-                parameters["rho"],
-                parameters["L"],
-                seed=seed,
-                rejection=True,
-                verbose=True,
-            )
-            num_trees = ts.num_trees
-            if num_trees > 50:
-                print(seed)
-            print("num_trees:", ts.num_trees)
-
-    def no_test_smc(self):
-        num_replicates = 500
-        sample_size = 8
-        ploidy = 1
-        n = ploidy * sample_size
-        recombination_rate = 1e-8
-        rho = 2 * ploidy * recombination_rate * 1e4
-        sequence_length = 100000
-        obs = np.zeros(num_replicates, dtype=np.float64)
-
-        for i, ts in tqdm(
-            enumerate(
-                msprime.sim_ancestry(
-                    samples=sample_size,
-                    ploidy=ploidy,
-                    num_replicates=num_replicates,
-                    recombination_rate=rho,
-                    sequence_length=sequence_length,
-                    model="SMC",
-                )
-            ),
-            total=num_replicates,
-        ):
-            tree = ts.first()
-            obs[i] = tree.time(tree.root)
-
-        exp = self.sample_marginal_tree_depth(n, num_replicates)
-        self.plot_qq(obs, exp, "smc", "analytical", "tree_depth_smc")
-
-    def get_marginal_tree_stats(
-        self, rho, L, sample_size, num_replicates, rejection, expectation
+    def get_all_marginal_tree_stats(
+        self, sample_size, rho, L, num_replicates
     ):
-        ts_iter = self.run_yaca(
-            rho, L, sample_size, num_replicates, rejection, expectation
+        positions = [0, L//2, L]
+        tree_stats_labels = ['t1', 'tn', 'trt', 'tbl']
+        tree_stats = np.zeros(
+            (num_replicates, len(positions), len(tree_stats_labels)),
+            dtype=np.float64
         )
-        # keeping track of total root time and total branch length
-        trt = np.zeros(num_replicates, dtype=np.float64)
-        tbl = np.zeros(num_replicates, dtype=np.float64)
-        t1 = np.zeros(num_replicates, dtype=np.float64)
-        tn = np.zeros(num_replicates, dtype=np.float64)
+        seeds = self.get_seeds(num_replicates)
+        ts_iter = self.run_yaca(sample_size, rho, L, seeds)
+        for idx, ts in enumerate(ts_iter):
+            tree_stats[idx] = self.marginal_tree_stats(ts, positions, tree_stats.shape[1:])
+        return tree_stats
 
-        check_count = 0
-        for i, ts in enumerate(ts_iter):
-            tree = ts.first()
-            trt[i] = tree.time(tree.root)
-            tbl[i] = tree.total_branch_length
-            check_count += ts.num_trees
-            tn[i] = tree.time(tree.root) - max(
+    def marginal_tree_stats(self, ts, positions, dim):
+        result = np.zeros(dims, dtype=np.float64)
+        # t1, tn, tree_depth, total_branch_length
+        for i, pos in enumerate(positions):
+            tree = ts.at(pos)
+            root_time = tree.time(tree.root)
+            result[i, 0] = min(tree.time(tree.parent(u)) for u in tree.samples())
+            result[i, 1] = root_time - max(
                 tree.time(u) for u in tree.children(tree.root)
             )
-            t1[i] = min(tree.time(tree.parent(u)) for u in tree.samples())
-        return trt, tbl, t1, tn
+            result[i, 2] = root_time
+            result[i, 3] = tree.total_branch_length
+
+        return result
 
     def verify_marginal_tree_stats(
-        self, trt, tbl, n, model, t1=None, tn=None, param_str=""
+        self, yaca_stats, n, rng, labels, param_str=""
     ):
-        num_replicates = trt.size
-        exp_trt = self.sample_marginal_tree_depth(n, num_replicates)
+        num_replicates, num_pos, num_labels = yaca_stats.shape
+        exp_stats = self.get_expected_tree_stats(n, rng, dims)
+        
         self.require_output_dir(f"n_{n}")
-        self.plot_qq(
-            trt, exp_trt, "yaca", "sum_exp", f"n_{n}/tree_depth_{model}_{param_str}"
-        )
-        if isinstance(t1, np.ndarray) and isinstance(tn, np.ndarray):
-            exp_t1 = np.random.exponential(
+
+        for j in range(num_pos):
+            for i in range(num_labels):
+                self.plot_qq(
+                    yaca_stats[j, i], 
+                    exp_stats[j, i], 
+                    "yaca", 
+                    f"exp_{labels[i]}", 
+                    f"n_{n}/{labels[i]}_{param_str}_pos_{j}"
+                )
+
+    def get_expected_tree_stats(self, n, rng, dims):
+        results = np.zeros(dims, dtype=np.float64)
+        num_replicates = dims[0]
+        
+        results[0] = rng.exponential(
                 scale=1 / math.comb(n, 2), size=num_replicates
             )
-            exp_tn = np.random.exponential(scale=1, size=num_replicates)
-            self.plot_qq(t1, exp_t1, "yaca", "t1", f"n_{n}/t1_{model}_{param_str}")
-            self.plot_qq(tn, exp_tn, "yaca", "tn", f"n_{n}/tn_{model}_{param_str}")
+        results[1] = rng.exponential(scale=1, size=num_replicates)
+        results[2:] = self.sample_marginal_tree_depth(n, rng, num_replicates)
 
-    def sample_marginal_tree_depth(self, n, num_replicates):
+    def sample_marginal_tree_depth(self, n, rng, num_replicates):
         result = np.zeros(num_replicates, dtype=np.float64)
         for i in range(n, 1, -1):
             rate = math.comb(i, 2)
-            result += np.random.exponential(scale=1 / rate, size=num_replicates)
+            temp = rng.exponential(scale=1 / rate, size=num_replicates)
+            result[0] += temp
+            result[1] += i * temp
         return result
 
     def mean_marginal_tree_depth(self, n):
