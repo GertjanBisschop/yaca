@@ -108,31 +108,31 @@ class TestMargTBL(Test):
             self.verify_single_model(n, rho, L, 500, seed)
 
     def verify_single_model(
-        self, n, rho, L, num_replicates
+        self, n, rho, L, num_replicates, seed
     ):
         param_str = f"L_{L}_rho_{rho}_n{n}"
         tree_stats = self.get_all_marginal_tree_stats(
-            n, rho, L, num_replicates,
+            n, rho, L, num_replicates, seed
         )
         rng = np.random.default_rng(seed)
         self.verify_marginal_tree_stats(tree_stats, n, rng, param_str)
 
     def get_all_marginal_tree_stats(
-        self, sample_size, rho, L, num_replicates
+        self, sample_size, rho, L, num_replicates, seed
     ):
-        positions = [0, L//2, L]
+        positions = [0, L//2, L-1]
         tree_stats_labels = ['t1', 'tn', 'trt', 'tbl']
         tree_stats = np.zeros(
             (num_replicates, len(positions), len(tree_stats_labels)),
             dtype=np.float64
         )
-        seeds = self.get_seeds(num_replicates)
+        seeds = self.get_seeds(num_replicates, seed)
         ts_iter = self.run_yaca(sample_size, rho, L, seeds)
         for idx, ts in enumerate(ts_iter):
             tree_stats[idx] = self.marginal_tree_stats(ts, positions, tree_stats.shape[1:])
-        return tree_stats
+        return np.swapaxes(tree_stats, 0, 2)
 
-    def marginal_tree_stats(self, ts, positions, dim):
+    def marginal_tree_stats(self, ts, positions, dims):
         result = np.zeros(dims, dtype=np.float64)
         # t1, tn, tree_depth, total_branch_length
         for i, pos in enumerate(positions):
@@ -150,16 +150,17 @@ class TestMargTBL(Test):
     def verify_marginal_tree_stats(
         self, yaca_stats, n, rng, labels, param_str=""
     ):
-        num_replicates, num_pos, num_labels = yaca_stats.shape
-        exp_stats = self.get_expected_tree_stats(n, rng, dims)
-        
+        num_labels, num_pos, num_replicates = yaca_stats.shape
+        exp_stats = self.get_expected_tree_stats(
+            n, rng, (num_labels, num_replicates)
+        )
         self.require_output_dir(f"n_{n}")
 
-        for j in range(num_pos):
-            for i in range(num_labels):
+        for i in range(num_labels):
+            for j in range(num_pos):
                 self.plot_qq(
-                    yaca_stats[j, i], 
-                    exp_stats[j, i], 
+                    yaca_stats[i, j], 
+                    exp_stats[i], 
                     "yaca", 
                     f"exp_{labels[i]}", 
                     f"n_{n}/{labels[i]}_{param_str}_pos_{j}"
@@ -167,16 +168,17 @@ class TestMargTBL(Test):
 
     def get_expected_tree_stats(self, n, rng, dims):
         results = np.zeros(dims, dtype=np.float64)
-        num_replicates = dims[0]
+        num_replicates = dims[-1]
         
         results[0] = rng.exponential(
                 scale=1 / math.comb(n, 2), size=num_replicates
             )
         results[1] = rng.exponential(scale=1, size=num_replicates)
         results[2:] = self.sample_marginal_tree_depth(n, rng, num_replicates)
+        return results
 
     def sample_marginal_tree_depth(self, n, rng, num_replicates):
-        result = np.zeros(num_replicates, dtype=np.float64)
+        result = np.zeros((2, num_replicates), dtype=np.float64)
         for i in range(n, 1, -1):
             rate = math.comb(i, 2)
             temp = rng.exponential(scale=1 / rate, size=num_replicates)

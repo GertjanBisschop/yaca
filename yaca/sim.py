@@ -390,13 +390,13 @@ def sample_pairwise_times(lineages, rng, time_last_event, rho, p=1):
     pairwise_times = np.zeros(math.comb(num_lineages, 2), dtype=np.float64)
 
     for idx in range(len(pairwise_times)):
+        a, b = list(reverse_combinadic_map(idx))
         _, overlap_length = intersect_lineages(lineages[a], lineages[b])
         if overlap_length > 0:
-            a, b = list(sim.reverse_combinadic_map(idx))
             node_time_diff = abs(lineages[a].node_time - lineages[b].node_time)
             oldest_node = max(lineages[a].node_time, lineages[b].node_time)
             start_time_exp_process = time_last_event - oldest_node
-            new_event_time = sim.draw_event_time_downsample(
+            new_event_time = draw_event_time_downsample(
                 1,
                 rho * overlap_length,
                 rng,
@@ -409,6 +409,8 @@ def sample_pairwise_times(lineages, rng, time_last_event, rho, p=1):
 
     # pick pair with smallest new_event_time
     non_zero_times = np.nonzero(pairwise_times)[0]
+    if len(non_zero_times) == 0:
+        return (-1, -1), math.inf
     selected_idx = non_zero_times[np.argmin(pairwise_times[non_zero_times])]
 
     return tuple(reverse_combinadic_map(selected_idx)), pairwise_times[selected_idx]
@@ -443,13 +445,14 @@ def sim_yaca(n, rho, L, seed=None, rejection=False, verbose=False):
     if verbose:
         check_progress(lineages, total_overlap)
 
-    while total_overlap > 0:
+    while not fully_coalesced(lineages, n):
         # draw new event time and sample lineages
         #rec_rate_adj = expected_fraction_observed_rec_events(len(lineages))
         rec_rate_adj = 1
         (a, b), new_event_time = sample_pairwise_times(
             lineages, rng, t, rho * rec_rate_adj
         )
+        assert new_event_time < math.inf, 'Infinite waiting time until next event'
         t += new_event_time
         overlap, overlap_length = intersect_lineages(lineages[a], lineages[b])
 
@@ -481,18 +484,9 @@ def sim_yaca(n, rho, L, seed=None, rejection=False, verbose=False):
         if len(c.ancestry) > 0:
             lineages.append(c)
 
-        # update total_overlap
-        (
-            total_overlap,
-            overlap_weighted_node_times,
-            num_pairs_overlap,
-        ) = update_total_overlap_brute_force(lineages, t)
         if verbose:
             check_progress(lineages, total_overlap)
 
-    assert total_overlap == 0, "total_overlap less than 0!"
-    if len(lineages) > 0:
-        print(seed)
     assert len(lineages) == 0, "Not all segments are ancestral to n samples."
 
     for node in nodes:
