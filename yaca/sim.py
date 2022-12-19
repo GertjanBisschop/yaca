@@ -403,7 +403,7 @@ def sample_pairwise_times(lineages, rng, time_last_event, rho, p=1):
                 T=node_time_diff,
                 start_time=start_time_exp_process,
                 p=p,
-                )
+            )
             new_event_time -= start_time_exp_process
             pairwise_times[idx] = new_event_time
 
@@ -447,19 +447,21 @@ def sim_yaca(n, rho, L, seed=None, rejection=False, verbose=False):
 
     while not fully_coalesced(lineages, n):
         # draw new event time and sample lineages
-        #rec_rate_adj = expected_fraction_observed_rec_events(len(lineages))
+        # rec_rate_adj = expected_fraction_observed_rec_events(len(lineages))
         rec_rate_adj = 1
         (a, b), new_event_time = sample_pairwise_times(
             lineages, rng, t, rho * rec_rate_adj
         )
-        assert new_event_time < math.inf, 'Infinite waiting time until next event'
+        assert new_event_time < math.inf, "Infinite waiting time until next event"
         t += new_event_time
         overlap, overlap_length = intersect_lineages(lineages[a], lineages[b])
 
         if verbose:
             print("coalescing lineages:", lineages[a].node, lineages[b].node)
         node_times = (lineages[a].node_time, lineages[b].node_time)
-        coalesced_segment = pick_segment(overlap, rho * rec_rate_adj, t, node_times, rng_numpy)
+        coalesced_segment = pick_segment(
+            overlap, rho * rec_rate_adj, t, node_times, rng_numpy
+        )
         c = Lineage(len(nodes), coalesced_segment, t)
         for interval in coalesced_segment:
             for lineage in lineages[a], lineages[b]:

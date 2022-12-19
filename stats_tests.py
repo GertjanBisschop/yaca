@@ -19,7 +19,6 @@ matplotlib.use("Agg")
 import statsmodels.api as sm
 
 from yaca import sim
-from yaca import sim_hudson as simh
 
 
 class Test:
@@ -76,9 +75,39 @@ class Test:
 
     def run_yaca(self, n, rho, L, seeds):
         for seed in tqdm(seeds, desc="Running yaca"):
-            yield sim.sim_yaca(
-                n, rho, L, seed=seed
+            yield sim.sim_yaca(n, rho, L, seed=seed)
+
+    def run_msprime(self, n, rho, L, seeds):
+        for seed in tqdm(seeds, desc="Running msp"):
+            yield msprime.sim_ancestry(
+                samples=n,
+                recombination_rate=rho / 2,
+                sequence_length=L,
+                ploidy=1,
+                population_size=1,
+                discrete_genome=False,
+                random_seed=seed,
             )
+
+    def msp_exact_num_trees(self, n, rho, L, num_replicates, seed):
+        # IMPORTANT!! We have to use the get_num_breakpoints method
+        # on the simulator as there is a significant drop in the number
+        # of trees if we use the tree sequence. There is a significant
+        # number of common ancestor events that result in a recombination
+        # being undone.
+        num_breakpoints = np.zeros(num_replicates, dtype=np.int64)
+        exact_sim = msprime.ancestry._parse_sim_ancestry(
+            samples=n,
+            recombination_rate=rho / 2,
+            sequence_length=L,
+            ploidy=1,
+            random_seed=seed,
+        )
+        for k in tqdm(range(num_replicates), desc="Running msprime exact"):
+            exact_sim.run()
+            num_breakpoints[k] = exact_sim.num_breakpoints
+            exact_sim.reset()
+        return num_breakpoints + 1
 
     def sum_squared_residuals(self, a1, a2):
         a1 = np.sort(a1)
@@ -93,44 +122,17 @@ class Test:
         plt.savefig(f, dpi=72)
         plt.close("all")
 
-
-class TestMargTBL(Test):
-    """
-    Test marginal total branch length
-    """
-
-    def test_tbl(self, seed=None):
-        
-        rho =  7.5e-4
-        L = 1000
-
-        for n in [2, 4, 8]:
-            self.verify_single_model(n, rho, L, 500, seed)
-
-    def verify_single_model(
-        self, n, rho, L, num_replicates, seed
-    ):
-        param_str = f"L_{L}_rho_{rho}_n{n}"
-        tree_stats = self.get_all_marginal_tree_stats(
-            n, rho, L, num_replicates, seed
-        )
-        rng = np.random.default_rng(seed)
-        self.verify_marginal_tree_stats(tree_stats, n, rng, param_str)
-
-    def get_all_marginal_tree_stats(
-        self, sample_size, rho, L, num_replicates, seed
-    ):
-        positions = [0, L//2, L-1]
-        tree_stats_labels = ['t1', 'tn', 'trt', 'tbl']
-        tree_stats = np.zeros(
-            (num_replicates, len(positions), len(tree_stats_labels)),
-            dtype=np.float64
-        )
-        seeds = self.get_seeds(num_replicates, seed)
-        ts_iter = self.run_yaca(sample_size, rho, L, seeds)
-        for idx, ts in enumerate(ts_iter):
-            tree_stats[idx] = self.marginal_tree_stats(ts, positions, tree_stats.shape[1:])
-        return np.swapaxes(tree_stats, 0, 2)
+    def log_run(self, filename, info_labels, info_array):
+        with open(filename, "w") as logfile:
+            print(
+                "\t".join(l for l in info_labels),
+                file=logfile,
+            )
+            for line in info_array:
+                print(
+                    "\t".join(str(entry) for entry in line),
+                    file=logfile,
+                )
 
     def marginal_tree_stats(self, ts, positions, dims):
         result = np.zeros(dims, dtype=np.float64)
@@ -147,32 +149,12 @@ class TestMargTBL(Test):
 
         return result
 
-    def verify_marginal_tree_stats(
-        self, yaca_stats, n, rng, labels, param_str=""
-    ):
-        num_labels, num_pos, num_replicates = yaca_stats.shape
-        exp_stats = self.get_expected_tree_stats(
-            n, rng, (num_labels, num_replicates)
-        )
-        self.require_output_dir(f"n_{n}")
-
-        for i in range(num_labels):
-            for j in range(num_pos):
-                self.plot_qq(
-                    yaca_stats[i, j], 
-                    exp_stats[i], 
-                    "yaca", 
-                    f"exp_{labels[i]}", 
-                    f"n_{n}/{labels[i]}_{param_str}_pos_{j}"
-                )
-
     def get_expected_tree_stats(self, n, rng, dims):
+        # t1, tn, tree_depth, total_branch_length
         results = np.zeros(dims, dtype=np.float64)
         num_replicates = dims[-1]
-        
-        results[0] = rng.exponential(
-                scale=1 / math.comb(n, 2), size=num_replicates
-            )
+
+        results[0] = rng.exponential(scale=1 / math.comb(n, 2), size=num_replicates)
         results[1] = rng.exponential(scale=1, size=num_replicates)
         results[2:] = self.sample_marginal_tree_depth(n, rng, num_replicates)
         return results
@@ -185,19 +167,6 @@ class TestMargTBL(Test):
             result[0] += temp
             result[1] += i * temp
         return result
-
-    def mean_marginal_tree_depth(self, n):
-        return 2 * (1 - 1 / n)
-
-    def get_analytical_tbl(self, n, t):
-        """
-        Returns the probabily density of the total branch length t with
-        a sample of n lineages. Wakeley Page 78.
-        """
-        t1 = (n - 1) / 2
-        t2 = math.exp(-t / 2)
-        t3 = pow(1 - math.exp(-t / 2), n - 2)
-        return t1 * t2 * t3
 
 
 class TestRecombination(Test):
@@ -305,7 +274,7 @@ class TestRecombination(Test):
         tree_span_hudson, num_trees_hudson = self.sample_hudson_tree_stats(
             n, rho, L, num_reps
         )
-        
+
         self.plot_qq(
             tree_span_yaca,
             tree_span_hudson,
@@ -395,66 +364,151 @@ class TestRecombination(Test):
         return results
 
 
+class TestMargTBL(Test):
+    """
+    Test marginal total branch length
+    """
+
+    def test_tbl(self, seed=None):
+
+        rho = 1e-2
+        L = 1000
+
+        for n in [2, 4, 8, 20]:
+            self.verify_single_model(n, rho, L, 500, seed)
+
+    def verify_single_model(self, n, rho, L, num_replicates, seed):
+        param_str = f"L_{L}_rho_{rho}_n{n}"
+        tree_stats_labels = ["t1", "tn", "trt", "tbl"]
+        tree_stats, av_num_trees = self.get_all_marginal_tree_stats(
+            n, rho, L, num_replicates, seed, len(tree_stats_labels)
+        )
+        if seed is None:
+            seed = random.randint(1, 2**16)
+        rng = np.random.default_rng(seed)
+        self.verify_marginal_tree_stats(
+            tree_stats, n, rng, tree_stats_labels, param_str
+        )
+        logfile = self._build_filename(f"n_{n}/{param_str}/logfile", extension=".tsv")
+        self.log_run(logfile, ["seed", "av_num_trees"], [[seed, av_num_trees]])
+
+    def verify_marginal_tree_stats(self, yaca_stats, n, rng, labels, param_str=""):
+        num_labels, num_pos, num_replicates = yaca_stats.shape
+        exp_stats = self.get_expected_tree_stats(n, rng, (num_labels, num_replicates))
+        self.require_output_dir(f"n_{n}/{param_str}")
+
+        for i in range(num_labels):
+            for j in range(num_pos):
+                self.plot_qq(
+                    yaca_stats[i, j],
+                    exp_stats[i],
+                    "yaca",
+                    f"exp_{labels[i]}",
+                    f"n_{n}/{param_str}/{labels[i]}_{param_str}_pos_{j}",
+                )
+
+    def get_all_marginal_tree_stats(
+        self, sample_size, rho, L, num_replicates, seed, num_tree_stats
+    ):
+        positions = [0, L // 2, L - 1]
+        tree_stats = np.zeros(
+            (num_replicates, len(positions), num_tree_stats), dtype=np.float64
+        )
+        seeds = self.get_seeds(num_replicates, seed)
+        tree_counter = 0
+        ts_iter = self.run_yaca(sample_size, rho, L, seeds)
+        # ts_iter = self.run_msprime(sample_size, rho, L, seeds)
+        for idx, ts in enumerate(ts_iter):
+            tree_stats[idx] = self.marginal_tree_stats(
+                ts, positions, tree_stats.shape[1:]
+            )
+            tree_counter += ts.num_trees
+        print(f"Average number of trees: {tree_counter/num_replicates}")
+        return np.swapaxes(tree_stats, 0, 2), tree_counter / num_replicates
+
+    def mean_marginal_tree_depth(self, n):
+        return 2 * (1 - 1 / n)
+
+    def get_analytical_tbl(self, n, t):
+        """
+        Returns the probabily density of the total branch length t with
+        a sample of n lineages. Wakeley Page 78.
+        """
+        t1 = (n - 1) / 2
+        t2 = math.exp(-t / 2)
+        t3 = pow(1 - math.exp(-t / 2), n - 2)
+        return t1 * t2 * t3
+
+
 class TestRecAgainstMsp(Test):
     """
     Test number of trees against msprime
 
     """
 
-    def test_num_trees(self):
-        rho = 5e-4
+    def test_num_trees(self, seed=None, test_yaca=True):
+        rho = 5e-5
         L = 1e5
-        n = 4
-        num_reps = 1000
+        num_reps = 500
 
-        # num_trees_yaca = self.yaca_num_trees(n, rho, L, num_replicates, False)
-        num_trees_msp_exact = self.msp_exact_num_trees(n, rho / 2, L, num_reps)
-        num_trees_msp = self.msp_num_trees(n, rho, L, num_reps, ploidy=1)
-        self.plot_qq(
-            num_trees_msp,
-            num_trees_msp_exact,
-            "msp",
-            "msp_exact",
-            f"num_trees_msp_msp_exact_n{n}",
-        )
-        # self.plot_qq(num_trees_yaca, num_trees_msp, "yaca", "msp", f"num_trees_n{n}")
-
-    def test_num_trees_yaca(self):
-        n = 2
-        L = 5e4
-        rho = 1e-4
-        num_replicates = 500
-
-        num_trees_yaca = self.yaca_num_trees(n, rho, L, num_replicates, False)
-        for model in "hudson", "smc":
-            num_trees_msp = self.msp_num_trees(n, rho, L, num_replicates, 1, model)
-            self.plot_qq(
-                num_trees_yaca, num_trees_msp, "yaca", "msp", f"num_trees_n{n}_{model}"
+        for n in [4, 8, 20]:
+            apply_rec_correction = True
+            self.verify_num_trees(
+                n, rho, L, num_reps, seed, test_yaca, apply_rec_correction
             )
 
-    def yaca_num_trees(self, n, rho, L, num_replicates, rejection):
-        tss = self.run_yaca(rho, L, n, num_replicates, rejection)
+    def verify_num_trees(
+        self, n, rho, L, num_replicates, seed, test_yaca, apply_rec_correction
+    ):
+        param_str = f"L_{L}_rho_{rho}_n{n}"
+        if seed is None:
+            seed = random.randint(1, 2**16)
+        seeds = self.get_seeds(num_replicates, seed)
+        num_trees_msp_exact = self.msp_exact_num_trees(n, rho, L, num_replicates, seed)
+
+        if test_yaca:
+            model = "yaca"
+            rec_corr = (
+                sim.expected_fraction_observed_rec_events(n)
+                if apply_rec_correction
+                else 1
+            )
+            num_trees = self.yaca_num_trees(n, rho * rec_corr, L, seeds)
+            output_str = f"{model}_num_trees_msp_exact_n{n}_with_correction"
+        else:
+            model = "hudson"
+            num_trees = self.msp_num_trees(n, rho, L, num_replicates, model=model)
+            output_str = f"{model}_num_trees_msp_exact_n{n}"
+        self.require_output_dir(f"n_{n}/{param_str}")
+        self.plot_qq(
+            num_trees,
+            num_trees_msp_exact,
+            model,
+            "msp_exact",
+            f"n_{n}/{param_str}/{output_str}",
+        )
+        logfile = self._build_filename(
+            f"n_{n}/{param_str}/logfile_{model}", extension=".tsv"
+        )
+        self.log_run(
+            logfile,
+            [
+                "seed",
+            ],
+            [
+                [
+                    seed,
+                ]
+            ],
+        )
+
+    def yaca_num_trees(self, n, rho, L, seeds):
+        num_replicates = len(seeds)
+        tss = self.run_yaca(n, rho, L, seeds)
         result = np.zeros(num_replicates, dtype=np.int64)
         for i, ts in enumerate(tss):
             result[i] = ts.num_trees
         return result
-
-    def msp_exact_num_trees(self, n, rho, L, num_replicates):
-        # IMPORTANT!! We have to use the get_num_breakpoints method
-        # on the simulator as there is a significant drop in the number
-        # of trees if we use the tree sequence. There is a significant
-        # number of common ancestor events that result in a recombination
-        # being undone.
-        num_breakpoints = np.zeros(num_replicates, dtype=np.int64)
-        # ploidy is 2, see msprime.ancestry l374
-        exact_sim = msprime.ancestry._parse_simulate(
-            sample_size=n, recombination_rate=rho, length=L
-        )
-        for k in tqdm(range(num_replicates), desc="Running msprime exact"):
-            exact_sim.run()
-            num_breakpoints[k] = exact_sim.num_breakpoints
-            exact_sim.reset()
-        return num_breakpoints + 1
 
     def msp_num_trees(self, n, rho, L, num_replicates, ploidy=1, model="hudson"):
         num_trees = np.zeros(num_replicates, dtype=np.int64)
@@ -464,7 +518,7 @@ class TestRecAgainstMsp(Test):
                     samples=n,
                     ploidy=ploidy,
                     num_replicates=num_replicates,
-                    recombination_rate=rho,
+                    recombination_rate=rho / 2,
                     sequence_length=L,
                     model=model,
                 )
@@ -477,35 +531,87 @@ class TestRecAgainstMsp(Test):
         return num_trees
 
 
-class TestAgainstSmc(Test):
-    def test_n8(self):
-        num_replicates = 500
-        sample_size = 8
-        ploidy = 1
-        n = ploidy * sample_size
-        recombination_rate = 1e-4
-        rho = 2 * ploidy * recombination_rate
-        sequence_length = 100000
-        obs = np.zeros(num_replicates, dtype=np.float64)
+class TestSamplingConsistency(Test):
+    def test_sampling_consistency(self, seed=None):
 
-        for i, ts in tqdm(
-            enumerate(
-                msprime.sim_ancestry(
-                    samples=sample_size,
-                    ploidy=ploidy,
-                    num_replicates=num_replicates,
-                    recombination_rate=rho,
-                    sequence_length=sequence_length,
-                    model="SMC",
+        rho = 1e-2
+        L = 1000
+        apply_rec_correction = True
+
+        for n_max, n_min in zip([4, 8, 20], [2, 4, 8]):
+            self.verify_single_model(
+                n_max, n_min, rho, L, 500, seed, apply_rec_correction
+            )
+
+    def verify_single_model(
+        self, n_max, n_min, rho, L, num_replicates, seed, apply_rec_correction
+    ):
+
+        param_str = f"L_{L}_rho_{rho}_n{n_max}_{n_min}"
+        if seed is None:
+            seed = random.randint(1, 2**16)
+        rng = np.random.default_rng(seed)
+        seeds = self.get_seeds(num_replicates, seed)
+
+        positions = [0, L // 2, L - 1]
+        tree_stats_labels = ["t1", "tn", "trt", "tbl"]
+        num_tree_labels = len(tree_stats_labels)
+        tree_stats_min = np.zeros(
+            (num_replicates, len(positions), num_tree_labels), dtype=np.float64
+        )
+        num_trees = np.zeros(num_replicates)
+        rec_corr = (
+            sim.expected_fraction_observed_rec_events(n_max)
+            if apply_rec_correction
+            else 1
+        )
+        ts_iter = self.run_yaca(n_max, rho * rec_corr, L, seeds)
+        for idx, ts in enumerate(ts_iter):
+            ts_simple = self.downsample_ts(ts, n_min, rng)
+            tree_stats_min[idx] = self.marginal_tree_stats(
+                ts_simple, positions, tree_stats_min.shape[1:]
+            )
+            num_trees[idx] = ts_simple.num_trees
+        tree_stats_min = np.swapaxes(tree_stats_min, 0, 2)
+
+        exp_tree_stats = self.get_expected_tree_stats(
+            n_min, rng, (num_tree_labels, num_replicates)
+        )
+        exp_num_trees = self.msp_exact_num_trees(n_min, rho, L, num_replicates, seed)
+        self.require_output_dir(f"n_{n_max}_{n_min}/{param_str}")
+        logfile = self._build_filename(
+            f"n_{n_max}_{n_min}/{param_str}/logfile", extension=".tsv"
+        )
+        self.log_run(logfile, ["seed"], [[seed]])
+        self.process_tree_stats(
+            exp_tree_stats, tree_stats_min, tree_stats_labels, (n_max, n_min), param_str
+        )
+        self.process_num_trees(exp_num_trees, num_trees, (n_max, n_min), param_str)
+
+    def process_tree_stats(self, exp_stats, obs_stats, stat_labels, n_tuple, param_str):
+        num_labels, num_pos, _ = obs_stats.shape
+        for i in range(num_labels):
+            for j in range(num_pos):
+                self.plot_qq(
+                    obs_stats[i, j],
+                    exp_stats[i],
+                    "yaca",
+                    f"exp_{stat_labels[i]}",
+                    f"n_{'_'.join(str(t) for t in n_tuple)}/{param_str}/{stat_labels[i]}_pos_{j}",
                 )
-            ),
-            total=num_replicates,
-        ):
-            tree = ts.first()
-            obs[i] = tree.time(tree.root)
 
-        exp = self.sample_marginal_tree_depth(n, num_replicates)
-        self.plot_qq(obs, exp, "smc", "analytical", "tree_depth_smc")
+    def process_num_trees(self, exp_stat, obs_stat, n_tuple, param_str):
+        self.plot_qq(
+            obs_stat,
+            exp_stat,
+            "yaca",
+            f"exp_num_trees",
+            f"n_{'_'.join(str(t) for t in n_tuple)}/{param_str}/num_trees",
+        )
+
+    def downsample_ts(self, ts, n, rng):
+        reduced_sample_set = rng.choice(ts.samples(), size=n, replace=False)
+        return ts.simplify(samples=reduced_sample_set)
 
 
 class TestVisualize(Test):
@@ -541,193 +647,12 @@ class TestVisualize(Test):
                 print(ts_msp.draw_text())
 
 
-class TestWaitingTimesSimple(Test):
-    """
-    Test distribution of waiting times against msp
-    """
-
-    def test_time_to_first_event_n2(self):
-        sim_reps = 1000
-        parameters = {
-            "sequence_length": 1_000_000,
-            "recombination_rate": 1e-8,
-            "population_size": 1e4,
-            "samples": 1,
-            "ploidy": 2,
-        }
-        exp = self.get_first_coalescence_time(sim_reps, parameters)
-        obs = self.get_times_non_hom_poiss(parameters)
-        self.plot_qq(obs, exp, "yaca", "msp", "test_time_to_first_event_n2")
-
-    def test_time_to_first_event_n4(self):
-        parameters = {
-            "sequence_length": 1_000_000,
-            "recombination_rate": 1e-8,
-            "population_size": 1e4,
-            "samples": 2,
-            "ploidy": 2,
-        }
-        exp = self.get_first_coalescence_time(1000, parameters)
-        obs = self.get_times_non_hom_poiss(parameters)
-        self.plot_qq(obs, exp, "yaca", "msp", "test_time_to_first_event_n4")
-
-    def test_time_to_first_event_n8(self):
-        parameters = {
-            "sequence_length": 1_000_000,
-            "recombination_rate": 1e-8,
-            "population_size": 1e4,
-            "samples": 4,
-            "ploidy": 2,
-        }
-        exp = self.get_first_coalescence_time(1000, parameters)
-        obs = self.get_times_non_hom_poiss(parameters)
-        self.plot_qq(obs, exp, "yaca", "msp", "test_time_to_first_event_n8")
-
-    def get_first_coalescence_time(self, reps, parameters):
-        """
-        Simulate reps and extract the time to the first coalescence event.
-        """
-        num_samples = parameters["ploidy"] * parameters["samples"]
-        results = np.zeros(reps, dtype=np.float64)
-        sim_reps = msprime.sim_ancestry(**parameters, num_replicates=reps)
-        for i, ts in tqdm(enumerate(sim_reps), total=reps):
-            results[i] = ts.node(num_samples).time
-        results /= 2 * parameters["population_size"]
-        return results
-
-    def get_times_non_hom_poiss(self, parameters):
-        num_lineages = parameters["samples"] * parameters["ploidy"]
-        rho = (
-            4
-            * parameters["population_size"]
-            * parameters["recombination_rate"]
-            * parameters["sequence_length"]
-        )
-        total_overlap = math.comb(num_lineages, 2) * rho
-
-        # return self.draw_value_non_hom(10_000, total_overlap, num_lineages)
-        return self.draw_min_non_hom(10_000, rho, num_lineages)
-
-    def draw_value_non_hom(self, reps, rho_overlap, num_lineages):
-        """
-        Given expected coalescence rate (k choose 2)* (2*T*rho), draw  reps random values
-        from the non-homogeneous exponential distribution.
-        rho is the total overlap of all combinations expressed in recombination rate units.
-        length as recombination rate = length * rho
-        rho should be total amount of overlap across all combinations
-        """
-        rng = random.Random()
-        results = np.zeros(reps, dtype=np.float64)
-        for i in range(reps):
-            results[i] = sim.draw_event_time(num_lineages, rho_overlap, rng)
-        return results
-
-    def draw_min_non_hom(self, reps, rho_overlap, num_lineages):
-        rng = random.Random()
-        results = np.zeros(reps, dtype=np.float64)
-        for i in range(reps):
-            time = np.inf
-            for _ in range(math.comb(num_lineages, 2)):
-                temp = sim.draw_event_time(2, rho_overlap, rng)
-                time = min(time, temp)
-            results[i] = time
-
-        return results
-
-
-class TestWaitingTimes(Test):
-    """
-    Test distribution of waiting times against modified hudson algorithm
-    """
-
-    def test_waiting_times(self):
-        n = [12, 20, 50]
-        fixed_time = [0.0, None]
-        # what kind of prior to expect here
-        # on lineage node times
-        time_distribution = None
-
-        for combo in itertools.product(fixed_time, n):
-            self.compare_waiting_time_distributions(*combo)
-
-    def compare_waiting_time_distributions(self, fixed_time, n):
-        rng = random.Random()
-        rho = 1e-4
-        sequence_length = 10_000
-        expectation = True
-        num_reps = 1000
-
-        # generate_segments
-        start_lineages = [
-            self.generate_lineage(sequence_length, i, rng, fixed_time) for i in range(n)
-        ]
-        time_last_event = max(lineage.node_time for lineage in start_lineages)
-
-        # draw bunch of waiting times
-        waiting_times_hudson = np.zeros(num_reps, dtype=np.float64)
-        for i in tqdm(range(num_reps), desc="running hudson ..."):
-            lineages = start_lineages[:]
-            t, _, _ = simh.time_to_next_coalescent_event(lineages, rho, time_last_event)
-            waiting_times_hudson[i] = t
-
-        waiting_times_yaca = np.zeros_like(waiting_times_hudson)
-
-        mean_time_to_last_event = (
-            sum(time_last_event - lin.node_time for lin in lineages) / n
-        )
-        total_overlap = sim.update_total_overlap_brute_force(lineages)
-        re_rate = total_overlap * rho
-
-        for i in tqdm(range(num_reps), desc="running yaca ..."):
-            waiting_times_yaca[i] = self.sample_waiting_time_yaca_expectation(
-                n, re_rate, rng, mean_time_to_last_event
-            )
-        waiting_times_yaca += time_last_event
-
-        plot_str = "start" if fixed_time != None else "mid_run"
-        self.plot_qq(
-            waiting_times_yaca,
-            waiting_times_hudson,
-            "yaca",
-            "hudson",
-            f"time_to_next_coalescence_{plot_str}_n{n}_qq",
-        )
-
-    def sample_waiting_time_yaca_expectation(
-        self, n, re_rate, rng, mean_time_to_last_event
-    ):
-        return sim.draw_event_time(n, re_rate, rng, mean_time_to_last_event)
-
-    def sample_waiting_time_yaca_pairwise(self, rho, lineages, rng, T):
-        _, _, _, _, t = sim.sample_pairwise_times(lineages, rng, T, rho)
-        return t + T
-
-    def generate_ancestry(self, L, rng):
-        intervals = [0]
-        while intervals[-1] < L:
-            new = rng.uniform(1, L / 10)
-            intervals.append(new + intervals[-1])
-        return [
-            sim.AncestryInterval(left, right, 1)
-            for left, right in zip(intervals[::2], intervals[1::2])
-        ]
-
-    def generate_lineage(self, L, i, rng, fixed_time=None):
-        ancestry = self.generate_ancestry(L, rng)
-        # how much variance do we want to add to the node times?
-        if fixed_time != None:
-            node_time = fixed_time
-        else:
-            node_time = rng.random()
-        return sim.Lineage(i, ancestry, node_time)
-
-
 class TestSingleStep(Test):
     def test_all_single_step(self):
         self._test_single()
-        #seeds = []
-        #idxs = [10]
-        #if len(idxs) > 0:
+        # seeds = []
+        # idxs = [10]
+        # if len(idxs) > 0:
         #    with open(
         #        self._build_filename(
         #            "test_single_pair_n16_testrun1/log_random_pair_n16_rho0.001_L100000.0_ru1.5",
@@ -740,9 +665,9 @@ class TestSingleStep(Test):
         #            read_line = line.rstrip().split("\t")
         #            if int(read_line[0]) in idxs:
         #                seeds.append(int(read_line[1]))
-        #print(seeds)
-        #self._test_single_pair_n16(seeds)
-        #self._test_single_pair_n16()
+        # print(seeds)
+        # self._test_single_pair_n16(seeds)
+        # self._test_single_pair_n16()
         # self._test_single_n2()
 
     def _test_single(self, seeds=None):
@@ -765,30 +690,34 @@ class TestSingleStep(Test):
 
         for j in tqdm(range(num_runs)):
             log_info[j] = self.run_single_test(
-                n, rho, L, num_replicates, run_until, param_str, j,
+                n,
+                rho,
+                L,
+                num_replicates,
+                run_until,
+                param_str,
+                j,
             )
         self.log_run(param_str, info_labels, log_info)
 
     def run_single_test(self, n, rho, L, num_replicates, run_until, param_str, j):
         coal_time_msp = np.zeros(num_replicates, dtype=np.float64)
         coal_time_yaca = np.zeros_like(coal_time_msp)
-        rng = random.Random(self.seeds[j])    
+        rng = random.Random(self.seeds[j])
         ts = self.generate_lineages(n, rho, L, run_until, rng)
         lineages = list(self.ts_to_lineages(ts).values())
         num_extant_lineages = len(lineages)
         pairwise_overlap = self._pairwise_overlap(lineages)
         different_non_unary_roots = len(self.get_non_unary_roots(ts))
-        rate_adjustor = different_non_unary_roots/len(lineages)
+        rate_adjustor = different_non_unary_roots / len(lineages)
 
         for i in tqdm(range(num_replicates), disable=True):
             # contains time to first node coalesced after
-            coal_time_msp[i] = self.run_msp_single_step(
-                rho, ts, rng, run_until
-            )
+            coal_time_msp[i] = self.run_msp_single_step(rho, ts, rng, run_until)
             new_time, pair_idx = self._sample_pairwise_times(
                 lineages, pairwise_overlap, rng, run_until, rho, rate_adjustor
             )
-            coal_time_yaca[i]= new_time
+            coal_time_yaca[i] = new_time
 
         info_dict = {
             "num_extant_lineages": num_extant_lineages,
@@ -816,12 +745,14 @@ class TestSingleStep(Test):
             pairwise_overlap[idx] = overlap_length
         return pairwise_overlap
 
-    def _sample_pairwise_times(self, lineages, pairwise_overlap, rng, last_event, rho, p):
+    def _sample_pairwise_times(
+        self, lineages, pairwise_overlap, rng, last_event, rho, p
+    ):
         assert p <= 1
         num_lineages = len(lineages)
         pairwise_times = np.zeros(math.comb(num_lineages, 2), dtype=np.float64)
         lower_rec_fraction = sim.expected_fraction_observed_rec_events(2)
-        
+
         for idx in range(len(pairwise_times)):
             overlap_length = pairwise_overlap[idx]
             if overlap_length > 0:
@@ -836,7 +767,7 @@ class TestSingleStep(Test):
                     T=node_time_diff,
                     start_time=start_time_exp_process,
                     p=p,
-                    )
+                )
                 new_event_time -= start_time_exp_process
                 pairwise_times[idx] = new_event_time
 
@@ -857,7 +788,7 @@ class TestSingleStep(Test):
             self.seeds = self.get_seeds(num_runs)
         run_until = 1.5
         param_str = f"random_pair_n{n}_rho{rho}_L{L}_ru{run_until}"
-        #info_labels = ["num_extant_lineages", "overlap", "num_segments", "num_trees"]
+        # info_labels = ["num_extant_lineages", "overlap", "num_segments", "num_trees"]
         info_labels = ["overlap", "num_trees"]
         info_size = len(info_labels)
         log_info = np.zeros((num_runs, info_size))
@@ -872,7 +803,7 @@ class TestSingleStep(Test):
     def run_single_test_pair(self, n, rho, L, num_replicates, run_until, param_str, j):
         coal_time_msp = np.zeros(num_replicates, dtype=np.float64)
         coal_time_yaca = np.zeros_like(coal_time_msp)
-        rng = random.Random(self.seeds[j])    
+        rng = random.Random(self.seeds[j])
         ts, pair = self.generate_lineage_pair(n, rho, L, run_until, rng)
         lineages = self.ts_to_lineages(ts)
         num_extant_lineages = len(lineages)
@@ -1053,13 +984,13 @@ class TestSingleStep(Test):
     def run_msp_single_step(self, rho, ts, rng, sim_start_time):
         new_seed = rng.randint(1, 2**16)
         ts_new = msprime.sim_ancestry(
-                recombination_rate=rho / 2,
-                ploidy=1,
-                discrete_genome=False,
-                population_size=1,
-                initial_state=ts,
-                random_seed=new_seed,
-            )
+            recombination_rate=rho / 2,
+            ploidy=1,
+            discrete_genome=False,
+            population_size=1,
+            initial_state=ts,
+            random_seed=new_seed,
+        )
 
         old_time = ts.max_root_time
         assert old_time == sim_start_time
@@ -1147,13 +1078,11 @@ def run_tests(suite, output_dir):
 def main():
     parser = argparse.ArgumentParser()
     choices = [
-        "TestMargTBL",
         "TestRecombination",
+        "TestMargTBL",
         "TestRecAgainstMsp",
-        "TestWaitingTimesSimple",
-        "TestWaitingTimes",
+        "TestSamplingConsistency",
         "TestVisualize",
-        "TestAgainstSmc",
         "TestSingleStep",
     ]
 
