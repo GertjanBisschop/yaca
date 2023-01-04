@@ -433,17 +433,14 @@ def sim_yaca(n, rho, L, seed=None, rejection=False, verbose=False):
     tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
     lineages = []
     nodes = []
-    num_pairs_overlap = n * (n - 1) / 2
-    total_overlap = L * num_pairs_overlap
     t = 0
-    overlap_weighted_node_times = 0
 
     for _ in range(n):
         lineages.append(Lineage(len(nodes), [AncestryInterval(0, L, 1)], t))
         nodes.append(Node(time=0, flags=tskit.NODE_IS_SAMPLE))
 
     if verbose:
-        check_progress(lineages, total_overlap)
+        check_progress(lineages)
 
     while not fully_coalesced(lineages, n):
         # draw new event time and sample lineages
@@ -487,7 +484,7 @@ def sim_yaca(n, rho, L, seed=None, rejection=False, verbose=False):
             lineages.append(c)
 
         if verbose:
-            check_progress(lineages, total_overlap)
+            check_progress(lineages)
 
     assert len(lineages) == 0, "Not all segments are ancestral to n samples."
 
@@ -498,8 +495,97 @@ def sim_yaca(n, rho, L, seed=None, rejection=False, verbose=False):
     return tables.tree_sequence()
 
 
-def check_progress(lineages, total_overlap):
-    print("total_overlap", total_overlap)
+@dataclasses.dataclass
+class Simulator:
+    samples: int
+    sequence_length: float
+    rho: float
+    seed: int = None
+
+    def __post_init__():
+        self.nodes = []
+        self.lineages = []
+        self.tables = tskit.TableCollection(L)
+        self.tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
+        self.rng = random.Random(self.seed)
+        self.rng_numpy = np.random.default_rng(self.seed)
+        self.time = 0
+
+        for _ in range(n):
+            self.lineages.append(
+                Lineage(
+                    len(self.nodes),
+                    [AncestryInterval(0, self.sequence_length, 1)],
+                    self.time,
+                )
+            )
+            self.nodes.append(Node(time=0, flags=tskit.NODE_IS_SAMPLE))
+
+    def run(self):
+        self._run_until(math.inf)
+        self.finalise_tables()
+        return self.tables.tree_sequence()
+
+    def _run_until(self, end_time):
+        while self.time < end_time:
+            if not fully_coalesced(self.lineages, self.samples):
+                Simulator._step()
+
+    def _step(end_time):
+        (a, b), new_event_time = sample_pairwise_times(
+            self.lineages, self.rng, self.time, self.rho
+        )
+        assert new_event_time < math.inf, "Infinite waiting time until next event"
+        self.time += new_event_time
+        if self.time > end_time:
+            self.time = end_time
+        else:
+            overlap, overlap_length = intersect_lineages(
+                self.lineages[a], self.lineages[b]
+            )
+
+            node_times = (self.lineages[a].node_time, self.lineages[b].node_time)
+            coalesced_segment = pick_segment(
+                overlap, self.rho, self.time, node_times, self.rng_numpy
+            )
+            c = Lineage(len(self.nodes), coalesced_segment, self.time)
+            for interval in coalesced_segment:
+                for lineage in self.lineages[a], self.lineages[b]:
+                    self.tables.edges.add_row(
+                        interval.left, interval.right, c.node, lineage.node
+                    )
+
+            self.nodes.append(Node(time=self.time))
+
+            # remove interval from old lineage
+            to_delete = []
+            for lineage_idx in a, b:
+                updated_ancestry = list(
+                    remove_segment(self.lineages[lineage_idx], c.ancestry)
+                )
+                self.lineages[lineage_idx].ancestry = updated_ancestry
+                if len(updated_ancestry) == 0:
+                    to_delete.append(lineage_idx)
+            for lineage_idx in sorted(to_delete, reverse=True):
+                del self.lineages[lineage_idx]
+
+            # filter out intervals that are ancestral to all samples
+            c.ancestry = [
+                segment for segment in c.ancestry if segment.ancestral_to < self.samples
+            ]
+            if len(c.ancestry) > 0:
+                self.lineages.append(c)
+
+    def finalise_tables():
+        for node in self.nodes:
+            self.tables.nodes.add_row(
+                flags=node.flags, time=node.time, metadata=node.metadata
+            )
+        self.tables.sort()
+        self.tables.edges.squash()
+
+
+def check_progress(lineages):
     print("num_lineages", len(lineages))
     for lin in lineages:
         print(lin)
