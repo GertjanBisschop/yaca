@@ -50,6 +50,7 @@ class TsStatRunner:
         return output_dir
 
     def _run_all(self, T):
+        max_size = max(stat.size for stat in T)
         a = np.zeros(
             (len(self.models), len(T), self.num_reps),
             dtype=np.float64
@@ -114,42 +115,90 @@ class NumNodes(TsStat):
         f = self._build_filename("cdf_")
         plot_cdf(a, self.name, f, self.runner)
 
-class Corrs(TsStat):
-    def __init__(self, d=-1):
+class CovDecay(TsStat):
+    
+    def compute(self, ts):
+        # requires many observations of t_i and t_j at given distances
+        # t_i can stay same fixed value
+        result = np.zeros(num_points + 1, dtype=np.float64)
+
+
+    def mean(self, a):
+        return np.mean(a, axis=-1)
+
+    def plot(self, a):
+        f = self._build_filename("")
+        a = self.mean(a)
+        b = np.arange(runner.rho * num_points)
+        plot_line(a, self.name, f, self.runner)
+
+class AutoCov(TsStat):
+    def __init__(self, runner, d=-1):
+        super().__init__(runner)
         self.d = d
 
-    def tmrca_array(ts, u, v, num_points):
-        points = np.arange(ts.sequence_length, num_points)
+    def tmrca_array(self, ts, u, v):
+        num_points = int(ts.sequence_length//self.d)
+        points = np.arange(num_points) * self.d
         results = np.zeros(num_points, dtype=np.float64)
         for i in range(num_points):
             tree = ts.at(points[i])
             results[i] = tree.tmrca(u, v)
         return results
 
+    def lagged_auto_cov(self, Xi,t):
+        """
+        for series of values x_i, length N, 
+        compute empirical auto-cov with lag t defined: 
+        1/(N-1) * sum_{i=0}^{N-t} ( x_i - x_s ) * ( x_{i+t} - x_s )
+        """
+        N = len(Xi)
+
+        # use sample mean estimate from whole series
+        Xs = np.mean(Xi)
+
+        # construct copies of series shifted relative to each other, 
+        # with mean subtracted from values
+        end_padded_series = np.zeros(N+t)
+        end_padded_series[:N] = Xi - Xs
+        start_padded_series = np.zeros(N+t)
+        start_padded_series[t:] = Xi - Xs
+
+        auto_cov = 1./(N-1) * np.sum( start_padded_series*end_padded_series )
+        return auto_cov
+
     def compute(self, ts):
         # compute probability that lagged
         # tmrc_array has same value
-        if d==-1:
-            tree1 = ts.at(ts.first())
-            tree2 = tree1.next()
-        else:
-            tree1 = ts.at(0)
-            tree2 = ts.at(self.d)
         
-        # compute probability that T_i == T_j
+        u, v = random.sample(range(ts.num_samples), 2)
+        a = self.tmrca_array(ts, u, v)
+        return self.lagged_auto_cov(a, 1)
     
     def plot(self, a):
-        pass
+        f = self._build_filename("cdf_")
+        plot_line(a, self.name, f, self.runner)
 
-class CorrsD100(Corrs):
-    def __init__(self):
-        super().__init__(100)
+class AutoCovD100(AutoCov):
+    def __init__(self, runner):
+        super().__init__(runner, d=100)
 
-class CorrsD1000(Corrs):
-    def __init__(self):
-        super().__init__(1000)
+class AutoCovD1000(AutoCov):
+    def __init__(self, runner):
+        super().__init__(runner, d=1000)
+
+class AutoCovD10000(AutoCov):
+    def __init__(self, runner):
+        super().__init__(runner, d=10_000)
 
 class EdgeStat(TsStat):
+
+    def __init__(self, runner):
+        super().__init__(runner)
+        self.num_bins = 4
+        self.single_bin = 2
+        if self.num_bins == 1:
+            assert self.single_bin==1
 
     def _node_hull_dict(self, ts):
         # {parent_id: [left_min, right_max, span]}
@@ -162,9 +211,9 @@ class EdgeStat(TsStat):
                 result[p][2] += right - left
         return result
 
-    def _bin_node_hull(self, d, bins, hull):
-        result = np.zeros(len(bins) + 1, dtype=np.float64)
-        bin_counts = np.zeros(len(bins) + 1, dtype=np.int64)
+    def _bin_node_hull(self, ts, d, bins, hull):
+        result = np.zeros(self.num_bins + 1, dtype=np.float64)
+        bin_counts = np.zeros(self.num_bins + 1, dtype=np.int64)
         time_bins = np.digitize(ts.nodes_time, bins)
     
         for key, value in d.items():
@@ -175,27 +224,27 @@ class EdgeStat(TsStat):
                 result[time_bin] += value[2]
             bin_counts[time_bin] += 1
         non_zero = bin_counts > 0
-        result[:, non_zero] /= bin_counts[non_zero]
-        return result
+        result[non_zero] /= bin_counts[non_zero]
+        return result[1:][self.single_bin]
 
     def compute(self, ts, hull):
-        bins = np.arange(10)
-        d = _node_hull_dict(ts)
-        return _bin_node_hull(d, bins, hull)
+        bins = np.arange(self.num_bins)
+        d = self._node_hull_dict(ts)
+        return self._bin_node_hull(ts, d, bins, hull)
 
     def plot(self, a):
-        f = self._build_filename("cdf_")
+        f = self._build_filename(f"cdf_")
         plot_cdf(a, self.name, f, self.runner)
 
 class Hull(EdgeStat):
     
     def compute(self, ts):
-        super().compute(ts, True)
+        return super().compute(ts, True)
 
 class TotalEdges(EdgeStat):
 
     def compute(self, ts):
-        super().compute(ts, False)
+        return super().compute(ts, False)
 
 def plot_qq(v1, v2, x_label, y_label, filename, stat_obj, info=""):
     sm.graphics.qqplot(v1)
@@ -225,6 +274,17 @@ def plot_cdf(a, x_label, filename, stat_obj):
     plt.savefig(filename, dpi=72)
     plt.close("all")
 
+def plot_line(a, x_label, filename, stat_obj):
+    for i, model in enumerate(stat_obj.models):
+        x = np.sort(a[i])
+        y = np.arange(len(x))/float(len(x))
+        plt.plot(x, y, label=model)
+    plt.xlabel(x_label)
+    plt.ylabel("cdf")
+    plt.legend(loc='lower right')
+    plt.savefig(filename, dpi=72)
+    plt.close("all")    
+
 def run_all(suite, output_dir, seed):
     rho = 5e-5
     L = 1e5
@@ -244,9 +304,11 @@ def main():
     parser = argparse.ArgumentParser()
     choices = [
         "NumNodes",
-        "Corrs",
-        "CorrsD100",
-        "CorrsD1000",
+        "CovDecay",
+        "AutoCov",
+        "AutoCovD100",
+        "AutoCovD1000",
+        "AutoCovD10000",
         "Hull",
         "TotalEdges",
     ]
