@@ -35,8 +35,8 @@ class TsStatRunner:
     def __post_init__(self):
         self.info_str = f"L_{self.sequence_length}_rho_{self.rho}"
         self.set_output_dir()
-        #self.models = ["yaca", "hudson", "smc", "smc_prime"]
-        self.models = ["yaca", "hudson"]
+        self.models = ["hudson", "smc", "smc_prime"]
+        #self.models = ["yaca", "hudson"]
         self.seeds = self.get_seeds()
 
     def set_output_dir(self):
@@ -52,19 +52,19 @@ class TsStatRunner:
     def _run_all(self, T):
         max_size = max(stat.size for stat in T)
         a = np.zeros(
-            (len(self.models), len(T), self.num_reps),
+            (len(self.models), len(T), self.num_reps, max_size),
             dtype=np.float64
             )
         for i, model in enumerate(self.models):
             self._run_single_model(model, a[i], T)
         for i, stat in enumerate(T):
-            stat.plot(a[:, i])
+            stat.plot(a[:, i,:, :stat.size])
 
     def _run_single_model(self, model, a, T):
         single_run = self._run_yaca() if model == "yaca" else self._run_msprime(model)
         for j, ts in enumerate(single_run):
             for i, stat in enumerate(T):
-                a[i, j] = stat.compute(ts)
+                a[i, j, :stat.size] = stat.compute(ts)
 
     def get_seeds(self):
         rng = np.random.default_rng(self.seed)
@@ -91,6 +91,7 @@ class TsStatRunner:
 @dataclasses.dataclass
 class TsStat:
     runner: TsStatRunner
+    size: int = 1
 
     def __post_init__(self):
         self.set_output_dir()
@@ -112,25 +113,63 @@ class NumNodes(TsStat):
         return ts.num_nodes
 
     def plot(self, a):
-        f = self._build_filename("cdf_")
-        plot_cdf(a, self.name, f, self.runner)
+        for i in range(self.size):
+            f = self._build_filename("cdf_")
+            plot_cdf(np.squeeze(a[...,i]), self.name, f, self.runner)
 
 class CovDecay(TsStat):
-    
+    def __init__(self, runner):
+        num_points = 20
+        super().__init__(runner, num_points + 1)
+
     def compute(self, ts):
         # requires many observations of t_i and t_j at given distances
         # t_i can stay same fixed value
-        result = np.zeros(num_points + 1, dtype=np.float64)
+        result = np.zeros(self.size, dtype=np.float64)
+        points = np.arange(self.size)/self.size * ts.sequence_length
+        u, v = random.sample(range(ts.num_samples), 2)
+        for i in range(self.size):
+            tree = ts.at(points[i])
+            result[i] = tree.tmrca(u, v)
+        return result
 
+    def compute_cov(self, a):
+        # shape a: num_models, reps, size
+        result = np.zeros((len(self.runner.models), self.size - 1), dtype=np.float64)
+        for i in range(result.shape[0]):
+            for j in range(1, self.size):
+                #result[i, j - 1] = np.cov(a[i, :, 0], a[i, :, j])[0][1]
+                result[i, j-1] = np.sum(a[i, :, 0] == a[i, :, j])/self.runner.num_reps
+        return result
 
-    def mean(self, a):
-        return np.mean(a, axis=-1)
+    def expected_cov(self, r, model):
+        if model == 'hudson':
+            return (r + 18) / (r**2 + 13*r + 18)
+        elif model == 'smc':
+            return 1 / (1 + r)
+        elif model == 'smc_prime':
+            # approximately
+            return 1 - 2*r/3
+        else:
+            raise ValueError("not implemented")
+
+    def plot_line(self, a, b, x_label, y_label, filename):
+        for i, model in enumerate(self.runner.models):
+            x = a[i]
+            plt.plot(b, x, label=model)
+        exp = np.array([self.expected_cov(2*r, 'hudson') for r in b])
+        plt.plot(b, exp, label=f'exp_hudson')
+        plt.xlabel(x_label)
+        plt.ylabel(y_label)
+        plt.legend(loc='upper right')
+        plt.savefig(filename, dpi=72)
+        plt.close("all")
 
     def plot(self, a):
         f = self._build_filename("")
-        a = self.mean(a)
-        b = np.arange(runner.rho * num_points)
-        plot_line(a, self.name, f, self.runner)
+        a = self.compute_cov(a)
+        b = np.arange(self.size)/self.size * self.runner.sequence_length * self.runner.rho / 2
+        self.plot_line(a, b[1:], 'rho', 'cov', f)
 
 class AutoCov(TsStat):
     def __init__(self, runner, d=-1):
@@ -176,8 +215,9 @@ class AutoCov(TsStat):
         return self.lagged_auto_cov(a, 1)
     
     def plot(self, a):
-        f = self._build_filename("cdf_")
-        plot_line(a, self.name, f, self.runner)
+        for i in range(self.size):
+            f = self._build_filename("cdf_")
+            plot_cdf(np.squeeze(a[...,i]), self.name, f, self.runner)
 
 class AutoCovD100(AutoCov):
     def __init__(self, runner):
@@ -233,8 +273,9 @@ class EdgeStat(TsStat):
         return self._bin_node_hull(ts, d, bins, hull)
 
     def plot(self, a):
-        f = self._build_filename(f"cdf_")
-        plot_cdf(a, self.name, f, self.runner)
+        for i in range(self.size):
+            f = self._build_filename("cdf_")
+            plot_cdf(np.squeeze(a[...,i]), self.name, f, self.runner)
 
 class Hull(EdgeStat):
     
@@ -274,21 +315,20 @@ def plot_cdf(a, x_label, filename, stat_obj):
     plt.savefig(filename, dpi=72)
     plt.close("all")
 
-def plot_line(a, x_label, filename, stat_obj):
+def plot_line(a, b, x_label, y_label, filename, stat_obj):
     for i, model in enumerate(stat_obj.models):
-        x = np.sort(a[i])
-        y = np.arange(len(x))/float(len(x))
-        plt.plot(x, y, label=model)
+        x = a[i]
+        plt.plot(b, x, label=model)
     plt.xlabel(x_label)
-    plt.ylabel("cdf")
-    plt.legend(loc='lower right')
+    plt.ylabel(y_label)
+    plt.legend(loc='upper right')
     plt.savefig(filename, dpi=72)
     plt.close("all")    
 
 def run_all(suite, output_dir, seed):
     rho = 5e-5
     L = 1e5
-    num_reps = 100
+    num_reps = 1000
     apply_rec_correction = True
 
     for n in [2,]:

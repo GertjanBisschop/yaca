@@ -3,7 +3,6 @@ import dataclasses
 import inspect
 import itertools
 import msprime
-import msprime._msprime as _msp
 import numpy as np
 import random
 import scipy
@@ -46,20 +45,28 @@ class SimTracker:
         results = np.zeros(
             (self.num_functions, self.num_reps, self.num_bins), dtype=np.float64
         )
-        for i in tqdm(range(self.num_reps), total=self.num_reps, disable=disable_tqdm):
+        for i in tqdm(range(self.num_reps), total=self.num_reps, disable=disable_tqdm):    
             time_iter = 0
-            simulator = msprime.ancestry._parse_sim_ancestry(
-                samples=self.samples,
-                recombination_rate=self.rho / 2,
-                sequence_length=self.sequence_length,
-                discrete_genome=self.discrete_genome,
-                model=model,
-                ploidy=1,
-                random_seed=self.seeds[i],
-            )
+            if model == 'yaca':
+                simulator = sim.Simulator(
+                    self.samples,
+                    self.sequence_length,
+                    self.rho,
+                    self.seeds[i]
+                    )
+            else:
+                simulator = msprime.ancestry._parse_sim_ancestry(
+                    samples=self.samples,
+                    recombination_rate=self.rho / 2,
+                    sequence_length=self.sequence_length,
+                    discrete_genome=self.discrete_genome,
+                    model=model,
+                    ploidy=1,
+                    random_seed=self.seeds[i],
+                )
             ret = msprime._msprime.EXIT_MAX_TIME
 
-            while ret == msprime._msprime.EXIT_MAX_TIME:
+            while ret == msprime._msprime.EXIT_MAX_TIME or ret == 0:
                 time = self.time_step * time_iter
                 ret = simulator._run_until(time)
                 for j, f in enumerate(self.extract_info):
@@ -77,7 +84,11 @@ class SimTracker:
         assert len(models) > 1, "At least 2 model names are required for a comparison"
         results = np.zeros((len(models), *self.shape), dtype=np.float64)
         for i, model in enumerate(models):
-            results[i] = self.run_sim_stepwise(model)
+            if model == 'yaca':
+                simulator = None
+                results[i] = self.run_yaca_stepwise('yaca')
+            else:
+                results[i] = self.run_sim_stepwise(model)
 
         return results
 

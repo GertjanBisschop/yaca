@@ -522,7 +522,7 @@ class Simulator:
             self.nodes.append(Node(time=0, flags=tskit.NODE_IS_SAMPLE))
 
     def run(self):
-        self._run_until(math.inf)
+        ret = self._run_until(math.inf)
         self.finalise_tables()
         return self.tables.tree_sequence()
 
@@ -530,6 +530,9 @@ class Simulator:
         while self.time < end_time:
             if not fully_coalesced(self.lineages, self.samples):
                 Simulator._step()
+            else:
+                return 1
+        return 0
 
     def _step(end_time):
         (a, b), new_event_time = sample_pairwise_times(
