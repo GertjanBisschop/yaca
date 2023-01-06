@@ -32,16 +32,22 @@ class SimTracker:
     samples: int
     rho: float
     sequence_length: float
-    extract_info: List[Callable[[Simulator], np.float64]]
+    extract_info: List[Callable[[msprime.ancestry.Simulator], np.float64]]
+    seed: int
     discrete_genome: bool = False
+
 
     def __post_init__(self):
         self.num_functions = len(self.extract_info)
         self.shape = (self.num_functions, self.num_reps, self.num_bins)
-        rng = np.random.RandomState(42)
-        self.seeds = rng.randint(1, 2**31, size=self.num_reps)
+        self.rng = np.random.default_rng(self.seed)
+
+    def get_seeds(self):
+        max_seed = 2**16
+        return self.rng.integers(1, max_seed, size=self.num_reps)
 
     def run_sim_stepwise(self, model="hudson", disable_tqdm=False):
+        seeds = self.get_seeds()
         results = np.zeros(
             (self.num_functions, self.num_reps, self.num_bins), dtype=np.float64
         )
@@ -52,7 +58,7 @@ class SimTracker:
                     self.samples,
                     self.sequence_length,
                     self.rho,
-                    self.seeds[i]
+                    seeds[i]
                     )
             else:
                 simulator = msprime.ancestry._parse_sim_ancestry(
@@ -62,7 +68,7 @@ class SimTracker:
                     discrete_genome=self.discrete_genome,
                     model=model,
                     ploidy=1,
-                    random_seed=self.seeds[i],
+                    random_seed=seeds[i],
                 )
             ret = msprime._msprime.EXIT_MAX_TIME
 
@@ -84,11 +90,7 @@ class SimTracker:
         assert len(models) > 1, "At least 2 model names are required for a comparison"
         results = np.zeros((len(models), *self.shape), dtype=np.float64)
         for i, model in enumerate(models):
-            if model == 'yaca':
-                simulator = None
-                results[i] = self.run_yaca_stepwise('yaca')
-            else:
-                results[i] = self.run_sim_stepwise(model)
+            results[i] = self.run_sim_stepwise(model=model)
 
         return results
 
@@ -103,8 +105,12 @@ def extract_num_lineages(sim):
 
 def extract_total_anc_mat(sim):
     total = 0
-    for anc in sim.ancestors:
-        total += anc[-1][1] - anc[0][0]
+    if sim.model == 'yaca':
+        for anc in sim.ancestors:
+            total += anc.ancestry[-1].right - anc.ancestry[0].left
+    else:
+        for anc in sim.ancestors:
+            total += anc[-1][1] - anc[0][0]
     return total
 
 
@@ -114,9 +120,14 @@ def extract_num_nodes(sim):
 
 def extract_sim_width(sim):
     max_hull = 0
-    for anc in sim.ancestors:
-        hull = anc[-1][1] - anc[0][0]
-        max_hull = max(max_hull, hull)
+    if sim.model == 'yaca':
+        for anc in sim.ancestors:
+            hull = anc.ancestry[-1].right - anc.ancestry[0].left
+            max_hull = max(max_hull, hull)
+    else:
+        for anc in sim.ancestors:
+            hull = anc[-1][1] - anc[0][0]
+            max_hull = max(max_hull, hull)
     return max_hull
 
 
@@ -142,8 +153,12 @@ def extract_mean_hull_width(sim):
     if sim.num_ancestors == 0:
         return 0
     total = 0
-    for anc in sim.ancestors:
-        total += anc[-1][1] - anc[0][0]
+    if sim.model == 'yaca':
+        for anc in sim.ancestors:
+            total += anc.ancestry[-1].right - anc.ancestry[0].left
+    else:
+        for anc in sim.ancestors:
+            total += anc[-1][1] - anc[0][0]
     return total / sim.num_ancestors / sim.sequence_length
 
 
@@ -151,43 +166,94 @@ def extract_mean_anc_material(sim):
     if sim.num_ancestors == 0:
         return 0
     total_anc_material = 0
-    for anc in sim.ancestors:
-        for segment in anc:
-            total_anc_material += segment[1] - segment[0]
+    if sim.model == 'yaca':
+        for anc in sim.ancestors:
+            for segment in anc.ancestry:
+                total_anc_material += segment.right - segment.left
+    else:
+        for anc in sim.ancestors:
+            for segment in anc:
+                total_anc_material += segment[1] - segment[0]
     return total_anc_material / sim.num_ancestors / sim.sequence_length
+
+def compare_models_plot(result, time_step, models, functions, shape, figsize, filename, error=None):
+    # shape of results is (models, functions, num_time_steps)
+    if isinstance(error, np.ndarray):
+            assert error.shape == result.shape
+    
+    fig, ax = plt.subplots(*shape, figsize=figsize)
+    ax_flat = ax.flat
+    x = np.arange(result.shape[-1]) * time_step
+    for i, function in enumerate(functions):
+        for j, label in enumerate(models):
+            ax_flat[i].plot(x, result[j, i], label=models[j])
+            if isinstance(error, np.ndarray):
+                ax_flat[i].fill_between(
+                    x,
+                    result[j, i] - error[j, i],
+                    result[j, i] + error[j, i], 
+                    alpha=0.25
+                )
+            ax_flat[i].set_title(function)
+    
+    handles, labels = ax_flat[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc='lower right')
+    fig.savefig(filename, dpi=70)
+
+def set_output_dir(output_dir, samples, info_str):
+    output_dir = pathlib.Path(output_dir + f"/n_{samples}/" + info_str)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
 
 
 def run_all(fs, output_dir, seed):
     rho = 5e-5
     L = 1e5
     num_reps = 500
-    apply_rec_correction = True
-    seed = 402
+    #simulation will be tracked until time num_bins * timestep 
+    num_bins = 10
+    timestep = 0.5
+    info_str = f"L_{L}_rho_{rho}"
+
     all_fs = []
     for key, value in globals().items():
         if callable(value) and value.__module__ == __name__:
             if key in fs:
                 all_fs.append(value)
-
-    for n in [2, 4, 8]:
+    models = ['yaca', 'hudson']
+    subplots_shape = (math.ceil(len(all_fs)/2), 2) 
+    fig_dims = tuple(4 * i for i in subplots_shape[::-1])
+    for n in [8,]:
         simtracker = SimTracker(
             num_reps,
             num_bins,
             timestep,
-            num_samples,
+            n,
             rho,
-            sequence_length,
-            [
-                extract_num_lineages,
-                extract_mean_hull_width,
-                extract_mean_anc_material,
-                extract_median_num_segments,
-                extract_mean_num_segments,
-            ],
+            L,
+            all_fs,
+            seed
         )
-        results = simtracker.run_sim_stepwise(disable_tqdm=True)
-        # graph results
 
+        results = simtracker.run_models(*models)
+        # graph results
+        mresults = np.mean(results, axis=1)
+        print(mresults.shape)
+        eresults = scipy.stats.sem(results, axis=1)
+        
+        output_dir = set_output_dir(output_dir, n, info_str)
+        filename = output_dir / 'simtrack_plot.png'
+        compare_models_plot(
+            mresults,
+            timestep, 
+            models,
+            [f.__name__ for f in all_fs],
+            subplots_shape, # shape
+            fig_dims, # size of fig
+            filename,
+            error=eresults
+        )
+        print('done')
 
 def main():
     parser = argparse.ArgumentParser()
@@ -212,13 +278,21 @@ def main():
         "--output-dir",
         "-d",
         type=str,
-        default="_output/stats_properties_ts",
+        default="_output/stats_properties_lins",
         help="specify the base output directory",
+    )
+
+    parser.add_argument(
+        "--seed",
+        "-s",
+        type=int,
+        default=42,
+        help="specify used seed",
     )
 
     args = parser.parse_args()
 
-    run_all(args.functions, args.output_dir)
+    run_all(args.functions, args.output_dir, args.seed)
 
 
 if __name__ == "__main__":

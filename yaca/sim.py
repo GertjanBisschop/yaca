@@ -444,8 +444,8 @@ def sim_yaca(n, rho, L, seed=None, rejection=False, verbose=False):
 
     while not fully_coalesced(lineages, n):
         # draw new event time and sample lineages
-        # rec_rate_adj = expected_fraction_observed_rec_events(len(lineages))
-        rec_rate_adj = 1
+        rec_rate_adj = expected_fraction_observed_rec_events(len(lineages))
+        #rec_rate_adj = 1
         (a, b), new_event_time = sample_pairwise_times(
             lineages, rng, t, rho * rec_rate_adj
         )
@@ -502,16 +502,17 @@ class Simulator:
     rho: float
     seed: int = None
 
-    def __post_init__():
+    def __post_init__(self):
         self.nodes = []
         self.lineages = []
-        self.tables = tskit.TableCollection(L)
+        self.tables = tskit.TableCollection(self.sequence_length)
         self.tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
         self.rng = random.Random(self.seed)
         self.rng_numpy = np.random.default_rng(self.seed)
         self.time = 0
+        self.model = 'yaca'
 
-        for _ in range(n):
+        for _ in range(self.samples):
             self.lineages.append(
                 Lineage(
                     len(self.nodes),
@@ -521,6 +522,19 @@ class Simulator:
             )
             self.nodes.append(Node(time=0, flags=tskit.NODE_IS_SAMPLE))
 
+    @property
+    def num_ancestors(self):
+        return len(self.lineages)
+
+    @property
+    def ancestors(self):
+        return self.lineages
+
+    @property
+    def num_nodes(self):
+        return len(self.nodes)
+    
+
     def run(self):
         ret = self._run_until(math.inf)
         self.finalise_tables()
@@ -529,14 +543,15 @@ class Simulator:
     def _run_until(self, end_time):
         while self.time < end_time:
             if not fully_coalesced(self.lineages, self.samples):
-                Simulator._step()
+                self._step(end_time)
             else:
                 return 1
         return 0
 
-    def _step(end_time):
+    def _step(self, end_time):
+        rec_rate_adj = expected_fraction_observed_rec_events(len(self.lineages))
         (a, b), new_event_time = sample_pairwise_times(
-            self.lineages, self.rng, self.time, self.rho
+            self.lineages, self.rng, self.time, self.rho * rec_rate_adj
         )
         assert new_event_time < math.inf, "Infinite waiting time until next event"
         self.time += new_event_time
@@ -549,7 +564,7 @@ class Simulator:
 
             node_times = (self.lineages[a].node_time, self.lineages[b].node_time)
             coalesced_segment = pick_segment(
-                overlap, self.rho, self.time, node_times, self.rng_numpy
+                overlap, self.rho * rec_rate_adj, self.time, node_times, self.rng_numpy
             )
             c = Lineage(len(self.nodes), coalesced_segment, self.time)
             for interval in coalesced_segment:
@@ -579,7 +594,7 @@ class Simulator:
             if len(c.ancestry) > 0:
                 self.lineages.append(c)
 
-    def finalise_tables():
+    def finalise_tables(self):
         for node in self.nodes:
             self.tables.nodes.add_row(
                 flags=node.flags, time=node.time, metadata=node.metadata

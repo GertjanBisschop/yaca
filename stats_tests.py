@@ -43,7 +43,7 @@ class Test:
 
     def _run_tests(self):
         all_results = self._get_tests()
-        print(f"Collected {len(all_results)} test(s).")
+        print(f"[+] Collected {len(all_results)} subtest(s).")
         for method in all_results:
             method()
 
@@ -205,7 +205,7 @@ class TestRecombination(Test):
         tract_lengths = np.zeros(num_reps, dtype=np.float64)
         seeds = self.get_seeds(num_reps)
         for i in tqdm(range(num_reps)):
-            rng = np.random.default_rng(seed[i])
+            rng = np.random.default_rng(seeds[i])
             tract_lengths[i] = sum(
                 interval.span
                 for interval in sim.pick_segment(intervals, rho, T, node_times, rng)
@@ -260,8 +260,6 @@ class TestRecombination(Test):
         rho = 5e-4
         L = 1e5
         n = 4
-        expectation = True
-        rejection = True
         num_reps = 500
         rng = np.random.default_rng()
         tree_span_exp = self.sample_tree_span(n, rho, rng, num_reps)
@@ -269,7 +267,7 @@ class TestRecombination(Test):
             tree_span_yaca,
             tree_span_yaca_exp,
             num_trees_yaca,
-        ) = self.sample_yaca_tree_stats(n, rho, L, num_reps, rejection, expectation)
+        ) = self.sample_yaca_tree_stats(n, rho, L, num_reps)
 
         tree_span_hudson, num_trees_hudson = self.sample_hudson_tree_stats(
             n, rho, L, num_reps
@@ -315,8 +313,9 @@ class TestRecombination(Test):
         rates = tbl * rho / 2
         return rng.exponential(scale=1 / rates)
 
-    def sample_yaca_tree_stats(self, n, rho, L, num_reps, rejection, expectation):
-        tss = self.run_yaca(rho, L, n, num_reps, rejection, expectation)
+    def sample_yaca_tree_stats(self, n, rho, L, num_reps):
+        seeds = self.get_seeds(num_reps)
+        tss = self.run_yaca(n, rho, L, seeds)
         results = np.zeros((3, num_reps), dtype=np.float64)
         for i, ts in enumerate(tss):
             results[0, i] = ts.first().span
@@ -452,13 +451,12 @@ class TestRecAgainstMsp(Test):
         num_reps = 500
 
         for n in [4, 8, 20]:
-            apply_rec_correction = True
             self.verify_num_trees(
-                n, rho, L, num_reps, seed, test_yaca, apply_rec_correction
+                n, rho, L, num_reps, seed, test_yaca
             )
 
     def verify_num_trees(
-        self, n, rho, L, num_replicates, seed, test_yaca, apply_rec_correction
+        self, n, rho, L, num_replicates, seed, test_yaca
     ):
         param_str = f"L_{L}_rho_{rho}_n{n}"
         if seed is None:
@@ -468,12 +466,7 @@ class TestRecAgainstMsp(Test):
 
         if test_yaca:
             model = "yaca"
-            rec_corr = (
-                sim.expected_fraction_observed_rec_events(n)
-                if apply_rec_correction
-                else 1
-            )
-            num_trees = self.yaca_num_trees(n, rho * rec_corr, L, seeds)
+            num_trees = self.yaca_num_trees(n, rho, L, seeds)
             output_str = f"{model}_num_trees_msp_exact_n{n}_with_correction"
         else:
             model = "hudson"
@@ -536,15 +529,14 @@ class TestSamplingConsistency(Test):
 
         rho = 1e-2
         L = 1000
-        apply_rec_correction = True
 
         for n_max, n_min in zip([4, 8, 20], [2, 4, 8]):
             self.verify_single_model(
-                n_max, n_min, rho, L, 500, seed, apply_rec_correction
+                n_max, n_min, rho, L, 500, seed
             )
 
     def verify_single_model(
-        self, n_max, n_min, rho, L, num_replicates, seed, apply_rec_correction
+        self, n_max, n_min, rho, L, num_replicates, seed
     ):
 
         param_str = f"L_{L}_rho_{rho}_n{n_max}_{n_min}"
@@ -560,12 +552,8 @@ class TestSamplingConsistency(Test):
             (num_replicates, len(positions), num_tree_labels), dtype=np.float64
         )
         num_trees = np.zeros(num_replicates)
-        rec_corr = (
-            sim.expected_fraction_observed_rec_events(n_max)
-            if apply_rec_correction
-            else 1
-        )
-        ts_iter = self.run_yaca(n_max, rho * rec_corr, L, seeds)
+        
+        ts_iter = self.run_yaca(n_max, rho, L, seeds)
         for idx, ts in enumerate(ts_iter):
             ts_simple = self.downsample_ts(ts, n_min, rng)
             tree_stats_min[idx] = self.marginal_tree_stats(
@@ -650,25 +638,7 @@ class TestVisualize(Test):
 class TestSingleStep(Test):
     def test_all_single_step(self):
         self._test_single()
-        # seeds = []
-        # idxs = [10]
-        # if len(idxs) > 0:
-        #    with open(
-        #        self._build_filename(
-        #            "test_single_pair_n16_testrun1/log_random_pair_n16_rho0.001_L100000.0_ru1.5",
-        #            ".tsv",
-        #        ),
-        #        "r",
-        #    ) as logfile:
-        #        logfile.readline()
-        #        for line in logfile:
-        #            read_line = line.rstrip().split("\t")
-        #            if int(read_line[0]) in idxs:
-        #                seeds.append(int(read_line[1]))
-        # print(seeds)
-        # self._test_single_pair_n16(seeds)
-        # self._test_single_pair_n16()
-        # self._test_single_n2()
+        self._test_single_n2()
 
     def _test_single(self, seeds=None):
         n = 16
@@ -1070,6 +1040,7 @@ class TestSingleStep(Test):
 
 
 def run_tests(suite, output_dir):
+    print(f'[+] Test suite contains {len(suite)} tests.')
     for cl_name in suite:
         instance = getattr(sys.modules[__name__], cl_name)(output_dir, cl_name)
         instance._run_tests()
@@ -1082,7 +1053,6 @@ def main():
         "TestMargTBL",
         "TestRecAgainstMsp",
         "TestSamplingConsistency",
-        "TestVisualize",
         "TestSingleStep",
     ]
 
@@ -1099,7 +1069,7 @@ def main():
         "--output-dir",
         "-d",
         type=str,
-        default="stats_tests_output",
+        default="_output/stats_tests_output",
         help="specify the base output directory",
     )
 

@@ -37,7 +37,7 @@ class TsStatRunner:
         self.set_output_dir()
         self.models = ["hudson", "smc", "smc_prime"]
         #self.models = ["yaca", "hudson"]
-        self.seeds = self.get_seeds()
+        self.rng = np.random.default_rng(self.seed)
 
     def set_output_dir(self):
         output_dir = pathlib.Path(self.output_dir + f"/n_{self.samples}/" + self.info_str)
@@ -67,16 +67,17 @@ class TsStatRunner:
                 a[i, j, :stat.size] = stat.compute(ts)
 
     def get_seeds(self):
-        rng = np.random.default_rng(self.seed)
         max_seed = 2**16
-        return rng.integers(1, max_seed, size=self.num_reps)
+        return self.rng.integers(1, max_seed, size=self.num_reps)
 
     def _run_yaca(self):
-        for seed in tqdm(self.seeds, desc="Running yaca"):
+        seeds = self.get_seeds()
+        for seed in tqdm(seeds, desc="Running yaca"):
             yield sim.sim_yaca(self.samples, self.rho, self.sequence_length, seed=seed)
 
     def _run_msprime(self, model):
-        for seed in tqdm(self.seeds, desc="Running msp"):
+        seeds = self.get_seeds()
+        for seed in tqdm(seeds, desc="Running msp"):
             yield msprime.sim_ancestry(
                 samples=self.samples,
                 recombination_rate=self.rho / 2,
