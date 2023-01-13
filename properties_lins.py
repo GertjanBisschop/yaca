@@ -36,7 +36,6 @@ class SimTracker:
     seed: int
     discrete_genome: bool = False
 
-
     def __post_init__(self):
         self.num_functions = len(self.extract_info)
         self.shape = (self.num_functions, self.num_reps, self.num_bins)
@@ -51,15 +50,12 @@ class SimTracker:
         results = np.zeros(
             (self.num_functions, self.num_reps, self.num_bins), dtype=np.float64
         )
-        for i in tqdm(range(self.num_reps), total=self.num_reps, disable=disable_tqdm):    
+        for i in tqdm(range(self.num_reps), total=self.num_reps, disable=disable_tqdm):
             time_iter = 0
-            if model == 'yaca':
+            if model == "yaca":
                 simulator = sim.Simulator(
-                    self.samples,
-                    self.sequence_length,
-                    self.rho,
-                    seeds[i]
-                    )
+                    self.samples, self.sequence_length, self.rho, seeds[i]
+                )
             else:
                 simulator = msprime.ancestry._parse_sim_ancestry(
                     samples=self.samples,
@@ -105,7 +101,7 @@ def extract_num_lineages(sim):
 
 def extract_total_anc_mat(sim):
     total = 0
-    if sim.model == 'yaca':
+    if sim.model == "yaca":
         for anc in sim.ancestors:
             total += anc.ancestry[-1].right - anc.ancestry[0].left
     else:
@@ -120,7 +116,7 @@ def extract_num_nodes(sim):
 
 def extract_sim_width(sim):
     max_hull = 0
-    if sim.model == 'yaca':
+    if sim.model == "yaca":
         for anc in sim.ancestors:
             hull = anc.ancestry[-1].right - anc.ancestry[0].left
             max_hull = max(max_hull, hull)
@@ -135,7 +131,7 @@ def extract_mean_num_segments(sim):
     total = 0
     if sim.num_ancestors == 0:
         return 0
-    if sim.model == 'yaca':
+    if sim.model == "yaca":
         for anc in sim.ancestors:
             total += len(anc.ancestry)
     else:
@@ -157,7 +153,7 @@ def extract_mean_hull_width(sim):
     if sim.num_ancestors == 0:
         return 0
     total = 0
-    if sim.model == 'yaca':
+    if sim.model == "yaca":
         for anc in sim.ancestors:
             total += anc.ancestry[-1].right - anc.ancestry[0].left
     else:
@@ -166,11 +162,37 @@ def extract_mean_hull_width(sim):
     return total / sim.num_ancestors / sim.sequence_length
 
 
+def extract_min_hull_width(sim):
+    if sim.num_ancestors == 0:
+        return 0
+    min_hull = math.inf
+    if sim.model == "yaca":
+        for anc in sim.ancestors:
+            min_hull = min(min_hull, anc.ancestry[-1].right - anc.ancestry[0].left)
+    else:
+        for anc in sim.ancestors:
+            min_hull = min(min_hull, anc[-1][1] - anc[0][0])
+    return min_hull
+
+
+def extract_max_hull_width(sim):
+    if sim.num_ancestors == 0:
+        return 0
+    max_hull = 0
+    if sim.model == "yaca":
+        for anc in sim.ancestors:
+            max_hull = max(max_hull, anc.ancestry[-1].right - anc.ancestry[0].left)
+    else:
+        for anc in sim.ancestors:
+            max_hull = max(max_hull, anc[-1][1] - anc[0][0])
+    return max_hull
+
+
 def extract_mean_anc_material(sim):
     if sim.num_ancestors == 0:
         return 0
     total_anc_material = 0
-    if sim.model == 'yaca':
+    if sim.model == "yaca":
         for anc in sim.ancestors:
             for segment in anc.ancestry:
                 total_anc_material += segment.right - segment.left
@@ -180,11 +202,14 @@ def extract_mean_anc_material(sim):
                 total_anc_material += segment[1] - segment[0]
     return total_anc_material / sim.num_ancestors / sim.sequence_length
 
-def compare_models_plot(result, time_step, models, functions, shape, figsize, filename, error=None):
+
+def compare_models_plot(
+    result, time_step, models, functions, shape, figsize, filename, error=None
+):
     # shape of results is (models, functions, num_time_steps)
     if isinstance(error, np.ndarray):
-            assert error.shape == result.shape
-    
+        assert error.shape == result.shape
+
     fig, ax = plt.subplots(*shape, figsize=figsize)
     ax_flat = ax.flat
     x = np.arange(result.shape[-1]) * time_step
@@ -195,14 +220,15 @@ def compare_models_plot(result, time_step, models, functions, shape, figsize, fi
                 ax_flat[i].fill_between(
                     x,
                     result[j, i] - error[j, i],
-                    result[j, i] + error[j, i], 
-                    alpha=0.25
+                    result[j, i] + error[j, i],
+                    alpha=0.25,
                 )
             ax_flat[i].set_title(function)
-    
+
     handles, labels = ax_flat[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc='lower right')
+    fig.legend(handles, labels, loc="lower right")
     fig.savefig(filename, dpi=70)
+
 
 def set_output_dir(output_dir, samples, info_str):
     output_dir = pathlib.Path(output_dir + f"/n_{samples}/" + info_str)
@@ -214,7 +240,7 @@ def run_all(fs, output_dir, seed):
     rho = 5e-5
     L = 1e5
     num_reps = 500
-    #simulation will be tracked until time num_bins * timestep 
+    # simulation will be tracked until time num_bins * timestep
     num_bins = 10
     timestep = 0.5
     info_str = f"L_{L}_rho_{rho}"
@@ -224,39 +250,31 @@ def run_all(fs, output_dir, seed):
         if callable(value) and value.__module__ == __name__:
             if key in fs:
                 all_fs.append(value)
-    models = ['yaca', 'hudson', 'smc']
-    subplots_shape = (math.ceil(len(all_fs)/2), 2) 
+    models = ["yaca", "hudson", "smc"]
+    subplots_shape = (math.ceil(len(all_fs) / 2), 2)
     fig_dims = tuple(4 * i for i in subplots_shape[::-1])
     for n in [2, 4, 8, 20]:
-        print(f'[+] Running sims for n = {n} ...')
-        simtracker = SimTracker(
-            num_reps,
-            num_bins,
-            timestep,
-            n,
-            rho,
-            L,
-            all_fs,
-            seed
-        )
+        print(f"[+] Running sims for n = {n} ...")
+        simtracker = SimTracker(num_reps, num_bins, timestep, n, rho, L, all_fs, seed)
 
         results = simtracker.run_models(*models)
         # graph results
         mresults = np.mean(results, axis=2)
         eresults = scipy.stats.sem(results, axis=2)
-        
+
         output_dir = set_output_dir(basedir, n, info_str)
-        filename = output_dir / 'simtrack_plot.png'
+        filename = output_dir / "simtrack_plot.png"
         compare_models_plot(
             mresults,
-            timestep, 
+            timestep,
             models,
-            [f.__name__.lstrip('extract_') for f in all_fs],
-            subplots_shape, # shape
-            fig_dims, # size of fig
+            [f.__name__.lstrip("extract_") for f in all_fs],
+            subplots_shape,  # shape
+            fig_dims,  # size of fig
             filename,
-            error=eresults
+            error=eresults,
         )
+
 
 def main():
     parser = argparse.ArgumentParser()

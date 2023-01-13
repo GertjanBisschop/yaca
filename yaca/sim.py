@@ -426,7 +426,7 @@ def sample_rejection(lineages, rng):
     return a, b, overlap, overlap_length
 
 
-def sim_yaca(n, rho, L, seed=None):
+def sim_yaca(n, rho, L, seed=None, verbose=False):
     rng = random.Random(seed)
     rng_numpy = np.random.default_rng(seed)
     tables = tskit.TableCollection(L)
@@ -445,7 +445,7 @@ def sim_yaca(n, rho, L, seed=None):
     while not fully_coalesced(lineages, n):
         # draw new event time and sample lineages
         rec_rate_adj = expected_fraction_observed_rec_events(len(lineages))
-        #rec_rate_adj = 1
+        # rec_rate_adj = 1
         (a, b), new_event_time = sample_pairwise_times(
             lineages, rng, t, rho * rec_rate_adj
         )
@@ -501,6 +501,7 @@ class Simulator:
     sequence_length: float
     rho: float
     seed: int = None
+    rec_adj: bool = True
 
     def __post_init__(self):
         self.nodes = []
@@ -510,7 +511,8 @@ class Simulator:
         self.rng = random.Random(self.seed)
         self.rng_numpy = np.random.default_rng(self.seed)
         self.time = 0
-        self.model = 'yaca'
+        self.model = "yaca"
+        self.num_breakpoints = 0
 
         for _ in range(self.samples):
             self.lineages.append(
@@ -533,7 +535,6 @@ class Simulator:
     @property
     def num_nodes(self):
         return len(self.nodes)
-    
 
     def run(self):
         ret = self._run_until(math.inf)
@@ -549,7 +550,10 @@ class Simulator:
         return 0
 
     def _step(self, end_time):
-        rec_rate_adj = expected_fraction_observed_rec_events(len(self.lineages))
+        if self.rec_adj:
+            rec_rate_adj = expected_fraction_observed_rec_events(len(self.lineages))
+        else:
+            rec_rate_adj = 1
         (a, b), new_event_time = sample_pairwise_times(
             self.lineages, self.rng, self.time, self.rho * rec_rate_adj
         )
@@ -566,6 +570,7 @@ class Simulator:
             coalesced_segment = pick_segment(
                 overlap, self.rho * rec_rate_adj, self.time, node_times, self.rng_numpy
             )
+            self.num_breakpoints += num_breakpoints
             c = Lineage(len(self.nodes), coalesced_segment, self.time)
             for interval in coalesced_segment:
                 for lineage in self.lineages[a], self.lineages[b]:

@@ -69,6 +69,26 @@ class Test:
         plt.savefig(f, dpi=72)
         plt.close("all")
 
+    def plot_line(self, x, y, x_label, y_label, labels, filename):
+        # model i
+        marker = itertools.cycle((".", "+", "*", "v", "^"))
+        plt.plot(x, y[:, 0], label=labels[0], marker="o")
+        for i in range(1, y.shape[1]):
+            plt.plot(
+                x,
+                y[:, i],
+                label=labels[i],
+                marker=next(marker),
+                markersize=12,
+                linestyle="None",
+            )
+        plt.xlabel(x_label)
+        plt.ylabel(y_label)
+        plt.legend(loc="lower right")
+        f = self._build_filename(filename)
+        plt.savefig(f, dpi=72)
+        plt.close("all")
+
     def get_seeds(self, num_replicates, seed=None):
         rng = np.random.default_rng(seed)
         max_seed = 2**16
@@ -78,8 +98,8 @@ class Test:
         for seed in tqdm(seeds, desc="Running yaca"):
             yield sim.sim_yaca(n, rho, L, seed=seed)
 
-    def run_msprime(self, n, rho, L, seeds):
-        for seed in tqdm(seeds, desc="Running msp"):
+    def run_msprime(self, n, rho, L, seeds, model="hudson"):
+        for seed in tqdm(seeds, desc=f"Running {model}"):
             yield msprime.sim_ancestry(
                 samples=n,
                 recombination_rate=rho / 2,
@@ -88,9 +108,10 @@ class Test:
                 population_size=1,
                 discrete_genome=False,
                 random_seed=seed,
+                model=model,
             )
 
-    def msp_exact_num_trees(self, n, rho, L, num_replicates, seed):
+    def msp_exact_num_trees(self, n, rho, L, num_replicates, seed, model="hudson"):
         # IMPORTANT!! We have to use the get_num_breakpoints method
         # on the simulator as there is a significant drop in the number
         # of trees if we use the tree sequence. There is a significant
@@ -103,12 +124,28 @@ class Test:
             sequence_length=L,
             ploidy=1,
             random_seed=seed,
+            model=model,
         )
-        for k in tqdm(range(num_replicates), desc="Running msprime exact"):
+        for k in tqdm(range(num_replicates), desc=f"Running {model}"):
             exact_sim.run()
             num_breakpoints[k] = exact_sim.num_breakpoints
             exact_sim.reset()
         return num_breakpoints + 1
+
+    def yaca_exact_num_trees(self, n, rho, L, num_replicates, seed):
+        num_breakpoints = np.zeros(num_replicates, dtype=np.int64)
+        seeds = self.get_seeds(num_replicates, seed)
+        for k in tqdm(range(num_replicates), desc="Running yaca"):
+            exact_sim = sim.Simulator(
+                samples=n,
+                sequence_length=L,
+                rho=rho,
+                seed=seed,
+                rec_adj=False,
+            )
+            ts = exact_sim.run()
+            num_breakpoints[k] = ts.num_trees - 1
+        return num_breakpoints
 
     def sum_squared_residuals(self, a1, a2):
         a1 = np.sort(a1)
@@ -283,7 +320,9 @@ class TestRecombination(Test):
             "marginal_tree_span_yaca_exp",
         )
         exp_total_branch_length = 2 * sum(1 / i for i in range(1, n))
-        num_trees_exp = rng.poisson(exp_total_branch_length * rho/2 * L, size=num_reps)
+        num_trees_exp = rng.poisson(
+            exp_total_branch_length * rho / 2 * L, size=num_reps
+        )
         self.plot_qq(
             num_trees_yaca,
             num_trees_exp,
@@ -456,13 +495,9 @@ class TestRecAgainstMsp(Test):
         num_reps = 500
 
         for n in [4, 8, 20]:
-            self.verify_num_trees(
-                n, rho, L, num_reps, seed, test_yaca
-            )
+            self.verify_num_trees(n, rho, L, num_reps, seed, test_yaca)
 
-    def verify_num_trees(
-        self, n, rho, L, num_replicates, seed, test_yaca
-    ):
+    def verify_num_trees(self, n, rho, L, num_replicates, seed, test_yaca):
         param_str = f"L_{L}_rho_{rho}_n{n}"
         if seed is None:
             seed = random.randint(1, 2**16)
@@ -529,6 +564,92 @@ class TestRecAgainstMsp(Test):
         return num_trees
 
 
+class TestRecombinationVar(Test):
+    def test_rec_var(self):
+        # for bunch of rec_rates
+        # get the mean_num_trees and variance
+        # for smc, smc' and hudson
+        # compare to expectation
+        seed = None
+        n = 10
+        L = 1e5
+        rho = 5e-5
+        num_r = 5
+        L_range = (np.arange(num_r) + 1) * L
+        num_reps = 500
+        models = ["hudson", "smc_prime", "smc", "yaca"]
+        mean_num_trees = np.zeros((len(L_range), len(models)), dtype=np.float64)
+        var_num_trees = np.zeros_like(mean_num_trees)
+
+        for i, l in enumerate(L_range):
+            for j, model in enumerate(models):
+                if model == "yaca":
+                    temp = self.yaca_exact_num_trees(n, rho, l, num_reps, seed)
+                else:
+                    temp = self.msp_exact_num_trees(n, rho, l, num_reps, seed, model)
+                mean_num_trees[i, j] = np.mean(temp)
+                var_num_trees[i, j] = np.var(temp)
+
+        var_exp = np.zeros((len(L_range), 1))
+        for i, l in enumerate(L_range):
+            var_exp[i] = self.get_predicted_variance(n, l * rho)
+
+        results = np.concatenate((var_exp, var_num_trees), axis=-1)
+        self.plot_line(
+            L_range * rho,
+            results,
+            "rho",
+            "variance",
+            [
+                "exp",
+            ]
+            + models,
+            f"var_num_trees_n_{n}",
+        )
+
+        mean_exp = np.zeros_like(var_exp)
+        for i, l in enumerate(L_range):
+            mean_exp[i] = rho * l * self.harmonic_number(n - 1)
+        results = np.concatenate((mean_exp, mean_num_trees), axis=-1)
+        self.plot_line(
+            L_range * rho,
+            results,
+            "rho",
+            "mean",
+            [
+                "exp",
+            ]
+            + models,
+            f"mean_num_trees_n_{n}",
+        )
+
+    def harmonic_number(self, n):
+        return np.sum(1 / np.arange(1, n + 1))
+
+    def hk_f(self, n, z):
+        """
+        Returns Hudson and Kaplan's f_n(z) function. This is based on the exact
+        value for n=2 and the approximations given in the 1985 Genetics paper.
+        """
+        ret = 0
+        if n == 2:
+            ret = (18 + z) / (z**2 + 13 * z + 18)
+        else:
+            ret = sum(1 / j**2 for j in range(1, n)) * self.hk_f(2, z)
+        return ret
+
+    def get_predicted_variance(self, n, R):
+        # We import this here as it's _very_ slow to import and we
+        # only use it in this case.
+        import scipy.integrate
+
+        def g(z):
+            return (R - z) * self.hk_f(n, z)
+
+        res, err = scipy.integrate.quad(g, 0, R)
+        return R * self.harmonic_number(n - 1) + 2 * res
+
+
 class TestSamplingConsistency(Test):
     def test_sampling_consistency(self, seed=None):
 
@@ -536,13 +657,9 @@ class TestSamplingConsistency(Test):
         L = 1000
 
         for n_max, n_min in zip([4, 8, 20], [2, 4, 8]):
-            self.verify_single_model(
-                n_max, n_min, rho, L, 500, seed
-            )
+            self.verify_single_model(n_max, n_min, rho, L, 500, seed)
 
-    def verify_single_model(
-        self, n_max, n_min, rho, L, num_replicates, seed
-    ):
+    def verify_single_model(self, n_max, n_min, rho, L, num_replicates, seed):
 
         param_str = f"L_{L}_rho_{rho}_n{n_max}_{n_min}"
         if seed is None:
@@ -557,7 +674,7 @@ class TestSamplingConsistency(Test):
             (num_replicates, len(positions), num_tree_labels), dtype=np.float64
         )
         num_trees = np.zeros(num_replicates)
-        
+
         ts_iter = self.run_yaca(n_max, rho, L, seeds)
         for idx, ts in enumerate(ts_iter):
             ts_simple = self.downsample_ts(ts, n_min, rng)
@@ -1045,7 +1162,7 @@ class TestSingleStep(Test):
 
 
 def run_tests(suite, output_dir):
-    print(f'[+] Test suite contains {len(suite)} tests.')
+    print(f"[+] Test suite contains {len(suite)} tests.")
     for cl_name in suite:
         instance = getattr(sys.modules[__name__], cl_name)(output_dir, cl_name)
         instance._run_tests()
@@ -1059,6 +1176,7 @@ def main():
         "TestRecAgainstMsp",
         "TestSamplingConsistency",
         "TestSingleStep",
+        "TestRecombinationVar",
     ]
 
     parser.add_argument(
