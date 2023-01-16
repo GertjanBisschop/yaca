@@ -159,6 +159,17 @@ class CovDecay(TsStat):
                 result[i, j - 1] = (
                     np.sum(a[i, :, 0] == a[i, :, j]) / self.runner.num_reps
                 )
+        if self.num_lineages == 2:
+            mean_result = np.zeros((len(self.runner.models)), dtype=np.float64)
+            for i in range(mean_result.shape[0]):
+                mean_result[i] = np.mean(a[i])
+            with open(self._build_filename("mean_coal", extension=".txt"), "w") as file:
+                for i in range(mean_result.shape[0]):
+                    print(
+                        self.runner.models[i] + "\t" + str(mean_result[i]),
+                        file=file,
+                    )
+
         with open(self._build_filename("", extension=".txt"), "w") as file:
             for i in range(result.shape[0]):
                 print(
@@ -387,12 +398,19 @@ class NonMarkovian(TsStat):
             mrca_0_half_equal = mrca_01_equal
         return results
 
-    def compute_p(self, a):
+    def compute_q(self, a):
         result = np.zeros((len(self.runner.models), self.size), dtype=np.float64)
         for i in range(result.shape[0]):
             for j in range(self.size):
                 result[i, j] = np.sum(a[i, :, j] == 0) / np.sum(a[i, :, j] >= 0)
         return result
+
+    def compute_p(self, a):
+        result = np.zeros((len(self.runner.models), self.size), dtype=np.float64)
+        for i in range(result.shape[0]):
+            for j in range(self.size):
+                result[i, j] = np.sum(a[i, :, j] >= 0) / a[i, :, j].size
+        return result        
 
     def plot_line(self, a, b, x_label, y_label, filename):
         marker = itertools.cycle((".", "+", "v", "^", "o"))
@@ -408,11 +426,34 @@ class NonMarkovian(TsStat):
         plt.close("all")
 
     def plot(self, a):
-        f = self._build_filename("")
-        a = self.compute_p(a)
+        f = self._build_filename("Q_")
+        r = self.compute_q(a)
         b = self.positions * self.runner.sequence_length * self.runner.rho
-        self.plot_line(a, b[1:], "rho", "Q", f)
+        self.plot_line(r, b[1:], "rho", "Q", f)
+        r = self.compute_p(a)
+        f = self._build_filename("P_")
+        self.plot_line(r, b[1:], "rho", "P", f)
 
+class KC(TsStat):
+
+    def compute(self, ts):
+        tree_0 = ts.first()
+        if tree_0.span == ts.sequence_length:
+            return 0
+
+        tree_0 = ts.first(sample_lists=True)
+        for i, bp in enumerate(ts.breakpoints()):
+            if i==0:
+                pass
+            elif i==1:
+                return tree_0.kc_distance(ts.at(bp, sample_lists=True), 1.)
+            else:
+                break
+
+    def plot(self, a):
+        for i in range(self.size):
+            f = self._build_filename("cdf_")
+            plot_cdf(np.squeeze(a[..., i]), self.name, f, self.runner)        
 
 def plot_qq(v1, v2, x_label, y_label, filename, stat_obj, info=""):
     sm.graphics.qqplot(v1)
@@ -457,12 +498,13 @@ def plot_line(a, b, x_label, y_label, filename, stat_obj):
 
 
 def run_all(suite, output_dir, seed):
-    rho = 5e-5
+    rho = 1e-4
+    #rho = 5e-5
     L = 1e5
     num_reps = 1000
     apply_rec_correction = True
 
-    for n in [20]:
+    for n in [2,4,8,20]:
         print(f"[+] Running models for n={n}")
         all_stats = []
         S = TsStatRunner(num_reps, n, rho, L, output_dir, seed)
@@ -485,6 +527,7 @@ def main():
         "HullEdge",
         "MeanAncMatEdge",
         "NonMarkovian",
+        "KC",
     ]
 
     parser.add_argument(

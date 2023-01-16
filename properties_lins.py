@@ -237,7 +237,7 @@ def set_output_dir(output_dir, samples, info_str):
 
 
 def run_all(fs, output_dir, seed):
-    rho = 5e-5
+    rho = 1e-4
     L = 1e5
     num_reps = 500
     # simulation will be tracked until time num_bins * timestep
@@ -283,6 +283,8 @@ def main():
         "extract_mean_hull_width",
         "extract_mean_anc_material",
         "extract_mean_num_segments",
+        "extract_min_hull_width",
+        "extract_max_hull_width",
     ]
 
     parser.add_argument(

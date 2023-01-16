@@ -512,7 +512,6 @@ class Simulator:
         self.rng_numpy = np.random.default_rng(self.seed)
         self.time = 0
         self.model = "yaca"
-        self.num_breakpoints = 0
 
         for _ in range(self.samples):
             self.lineages.append(
@@ -570,7 +569,6 @@ class Simulator:
             coalesced_segment = pick_segment(
                 overlap, self.rho * rec_rate_adj, self.time, node_times, self.rng_numpy
             )
-            self.num_breakpoints += num_breakpoints
             c = Lineage(len(self.nodes), coalesced_segment, self.time)
             for interval in coalesced_segment:
                 for lineage in self.lineages[a], self.lineages[b]:
