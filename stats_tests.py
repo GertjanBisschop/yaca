@@ -498,16 +498,22 @@ class TestRecAgainstMsp(Test):
             self.verify_num_trees(n, rho, L, num_reps, seed, test_yaca)
 
     def verify_num_trees(self, n, rho, L, num_replicates, seed, test_yaca):
+        exact = False
         param_str = f"L_{L}_rho_{rho}_n{n}"
         if seed is None:
             seed = random.randint(1, 2**16)
         seeds = self.get_seeds(num_replicates, seed)
-        num_trees_msp_exact = self.msp_exact_num_trees(n, rho, L, num_replicates, seed)
+        if exact:
+            num_trees_msp = self.msp_exact_num_trees(n, rho, L, num_replicates, seed)
+            exact_str = 'exact'
+        else:
+            num_trees_msp = self.msp_num_trees(n, rho, L, num_replicates)
+            exact_str = ''
 
         if test_yaca:
             model = "yaca"
             num_trees = self.yaca_num_trees(n, rho, L, seeds)
-            output_str = f"{model}_num_trees_msp_exact_n{n}_with_correction"
+            output_str = f"{model}_num_trees_msp_{exact_str}_n{n}_with_correction"
         else:
             model = "hudson"
             num_trees = self.msp_num_trees(n, rho, L, num_replicates, model=model)
@@ -515,9 +521,9 @@ class TestRecAgainstMsp(Test):
         self.require_output_dir(f"n_{n}/{param_str}")
         self.plot_qq(
             num_trees,
-            num_trees_msp_exact,
+            num_trees_msp,
             model,
-            "msp_exact",
+            f"msp_{exact_str}",
             f"n_{n}/{param_str}/{output_str}",
         )
         logfile = self._build_filename(
@@ -571,10 +577,10 @@ class TestRecombinationVar(Test):
         # for smc, smc' and hudson
         # compare to expectation
         seed = None
-        n = 10
+        n = 25
         L = 1e5
         rho = 5e-5
-        num_r = 5
+        num_r = 4
         L_range = (np.arange(num_r) + 1) * L
         num_reps = 500
         models = ["hudson", "smc_prime", "smc", "yaca"]

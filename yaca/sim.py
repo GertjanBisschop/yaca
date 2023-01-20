@@ -20,6 +20,7 @@ class AncestryInterval:
     left: float
     right: float
     ancestral_to: int
+    value: int = -1
 
     @property
     def span(self):
@@ -28,6 +29,9 @@ class AncestryInterval:
     @property
     def num_links(self):
         return self.span - 1
+
+    def copy(self):
+        return AncestryInterval(self.left, self.right, self.ancestral_to, self.value)
 
 
 @dataclasses.dataclass
@@ -216,7 +220,7 @@ def intersect_lineages(a, b):
             right = min(a.ancestry[i].right, b.ancestry[j].right)
             overlap.append(
                 AncestryInterval(
-                    left, right, a.ancestry[i].ancestral_to + b.ancestry[j].ancestral_to
+                    left, right, a.ancestry[i].ancestral_to + b.ancestry[j].ancestral_to,
                 )
             )
             overlap_length += right - left
@@ -227,7 +231,7 @@ def intersect_lineages(a, b):
     return (overlap, overlap_length)
 
 
-def generate_segments(intervals, rho, T, node_times, rng):
+def generate_segments(intervals, rho, T, node_times, rng, node_id=-1):
     split_intervals = []
     temp = []
     total_branch_length = sum(T - t for t in node_times)
@@ -236,6 +240,7 @@ def generate_segments(intervals, rho, T, node_times, rng):
         expected_num_breakpoints = rho / 2 * interval.span * total_branch_length
         num_breakpoints = rng.poisson(expected_num_breakpoints)
         if num_breakpoints == 0:  # if else clause not needed here
+            interval.value = node_id
             temp.append(interval)
         else:
             breakpoints = interval.span * rng.random(num_breakpoints) + interval.left
@@ -244,21 +249,52 @@ def generate_segments(intervals, rho, T, node_times, rng):
             for bp in breakpoints:
                 right = bp
                 assert left < right, "interval edges not strictly ascending."
-                temp.append(AncestryInterval(left, right, interval.ancestral_to))
+                temp.append(AncestryInterval(left, right, interval.ancestral_to, node_id))
                 split_intervals.append(temp)
                 temp = []
                 left = right
             right = interval.right
-            temp.append(AncestryInterval(left, right, interval.ancestral_to))
+            temp.append(AncestryInterval(left, right, interval.ancestral_to, node_id))
     split_intervals.append(temp)
 
     return split_intervals
 
+def assign_breakpoints(intervals, picked, rng, store_unary):
+    if not store_unary:
+        return None
 
-def pick_segment(intervals, rho, T, node_times, rng):
-    all_segments = generate_segments(intervals, rho, T, node_times, rng)
+    c1 = AncestryInterval(-math.inf, math.inf, 0)
+    c2 = AncestryInterval(-math.inf, math.inf, 0)
+    i = picked
+    assign = [c1, c2]
+    while i > 0 and len(assign) > 0:
+        idx = rng.integers(2) 
+        if idx < len(assign):
+            c = assign.pop(idx)
+            c.left = intervals[i][0].left
+        i -= 1
+    assign = [c1, c2]
+    i = picked
+    while i < len(intervals) - 1 and len(assign) > 0:
+        idx = rng.integers(2)
+        if idx < len(assign):
+            c = assign.pop(idx)
+            c.right = intervals[i][-1].right
+        i += 1
+    for c in c1, c2:
+        assert c.left <= intervals[picked][0].left
+        assert c.right >= intervals[picked][-1].right
+    
+    return (c1, c2)
+
+
+def pick_segment(intervals, rho, T, node_times, rng, node_id, store_unary=False):
+    all_segments = generate_segments(intervals, rho, T, node_times, rng, node_id)
+    # pick segment for coalescence
     idx = rng.integers(len(all_segments))
-    return all_segments[idx]
+    unary_boundaries = assign_breakpoints(all_segments, idx, rng, store_unary) 
+    
+    return all_segments[idx], unary_boundaries
 
 
 def remove_segment(current_lineage, to_remove):
@@ -280,20 +316,74 @@ def remove_segment(current_lineage, to_remove):
                 right = to_remove[j].left
                 if left != right:
                     yield AncestryInterval(
-                        left, right, current_lineage.ancestry[i].ancestral_to
+                        left, right, current_lineage.ancestry[i].ancestral_to, current_lineage.ancestry[i].value
                     )
                 left = to_remove[j].right
                 j += 1
             right = current_lineage.ancestry[i].right
             if left != right:
                 yield AncestryInterval(
-                    left, right, current_lineage.ancestry[i].ancestral_to
+                    left, right, current_lineage.ancestry[i].ancestral_to, current_lineage.ancestry[i].value
                 )
         i += 1
 
     while i < n:
         yield current_lineage.ancestry[i]
         i += 1
+
+
+def store_edges(tables, parent, children, unary_boundaries, store_unary):
+    
+    if store_unary:
+        for i, child in enumerate(children):
+            n = len(child.ancestry)
+            temp = []
+            j = 0
+            store_edge = False
+            boundary = unary_boundaries[i].left
+            alpha = None
+            segment = child.ancestry[j]
+            x = 0
+            while True:
+                alpha = segment.copy()
+                if segment.right > boundary:
+                    if segment.left < boundary: 
+                        segment.left = boundary
+                        alpha.right = boundary
+                    else:
+                        if boundary != unary_boundaries[i].right:
+                            alpha = None
+                            boundary = unary_boundaries[i].right
+                        else:
+                            segment = None
+                else:
+                    segment = None
+
+                if alpha:
+                    if alpha.left >= unary_boundaries[i].left and alpha.right <= unary_boundaries[i].right:
+                        tables.edges.add_row(
+                            alpha.left, 
+                            alpha.right,
+                            parent.node, # parent 
+                            alpha.value # child
+                        )
+                        alpha.value = parent.node
+                    temp.append(alpha)
+                if segment is None:
+                    j += 1
+                    if j < n:
+                        segment = child.ancestry[j]
+                    else:
+                        break
+            
+            child.ancestry = temp
+
+    else:
+        for interval in parent.ancestry:
+            for child in children:
+                tables.edges.add_row(
+                    interval.left, interval.right, parent.node, child.node
+                )
 
 
 def fully_coalesced(lineages, n):
@@ -426,7 +516,7 @@ def sample_rejection(lineages, rng):
     return a, b, overlap, overlap_length
 
 
-def sim_yaca(n, rho, L, seed=None, verbose=False):
+def sim_yaca(n, rho, L, seed=None, verbose=False, store_unary=False):
     rng = random.Random(seed)
     rng_numpy = np.random.default_rng(seed)
     tables = tskit.TableCollection(L)
@@ -436,7 +526,7 @@ def sim_yaca(n, rho, L, seed=None, verbose=False):
     t = 0
 
     for _ in range(n):
-        lineages.append(Lineage(len(nodes), [AncestryInterval(0, L, 1)], t))
+        lineages.append(Lineage(len(nodes), [AncestryInterval(0, L, 1, len(nodes))], t))
         nodes.append(Node(time=0, flags=tskit.NODE_IS_SAMPLE))
 
     if verbose:
@@ -456,16 +546,11 @@ def sim_yaca(n, rho, L, seed=None, verbose=False):
         if verbose:
             print("coalescing lineages:", lineages[a].node, lineages[b].node)
         node_times = (lineages[a].node_time, lineages[b].node_time)
-        coalesced_segment = pick_segment(
-            overlap, rho * rec_rate_adj, t, node_times, rng_numpy
+        coalesced_segment, unary_bounds = pick_segment(
+            overlap, rho * rec_rate_adj, t, node_times, rng_numpy, len(nodes), store_unary
         )
         c = Lineage(len(nodes), coalesced_segment, t)
-        for interval in coalesced_segment:
-            for lineage in lineages[a], lineages[b]:
-                tables.edges.add_row(
-                    interval.left, interval.right, c.node, lineage.node
-                )
-
+        store_edges(tables, c, (lineages[a], lineages[b]), unary_bounds, store_unary)
         nodes.append(Node(time=t))
 
         # remove interval from old lineage
