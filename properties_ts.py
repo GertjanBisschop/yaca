@@ -301,6 +301,111 @@ class AutoCovD10000(AutoCov):
     def __init__(self, runner):
         super().__init__(runner, d=10_000)
 
+class BinnedCovDecay(TsStat):
+    def __init__(self, runner):
+        num_points = 4
+        self.bins = np.arange(1, 3) / 2
+        self.num_bins = len(self.bins) + 2
+        super().__init__(runner, (num_points + 1) * self.num_bins)
+
+    def compute(self, ts):
+        # requires many observations of t_i and t_j at given distances
+        # t_i can stay same fixed value
+        result = np.zeros(self.size, dtype=np.float64).reshape((-1, self.num_bins))
+        num_points = int(self.size // self.num_bins)
+        points = np.arange(num_points) / (num_points) * ts.sequence_length
+        binned_pairs_array = self.binned_pairs(ts)
+
+        for j in range(self.num_bins):
+            u, v = binned_pairs_array[j]
+            if u != v:
+                tree = ts.at(points[0])
+                result[0, j] = tree.tmrca(u, v)
+                for i in range(1, num_points):
+                    tree = ts.at(points[i])
+                    result[i, j] = tree.tmrca(u, v)
+            else:
+                result[1:, j] = -1
+        
+        return result.reshape(-1)
+
+    def binned_pairs(self, ts):
+        tree = ts.first()
+        value_pairs = dict()
+        for u, v in itertools.combinations(ts.samples(), 2):
+            bin_idx = np.digitize(tree.tmrca(u, v), self.bins)
+            if bin_idx not in value_pairs:
+                value_pairs[bin_idx] = set()
+            value_pairs[bin_idx].add((u,v))
+        result = np.zeros((self.num_bins, 2), dtype=np.int64)
+        for bin_idx, pairs in value_pairs.items():
+            result[bin_idx] = random.choice(tuple(pairs))
+
+        return result
+
+    def compute_cov(self, a):
+        # size = (num_points + 1) * num_bins
+        num_points = int(self.size//self.num_bins)
+        result = np.zeros((len(self.runner.models), self.num_bins, num_points - 1), dtype=np.float64)
+        # shape a: num_models, reps, num_points + 1, num_bins
+        a = a.reshape((len(self.runner.models), self.runner.num_reps, num_points, -1))
+        
+        for i in range(result.shape[0]):
+            for j in range(self.num_bins):
+                empty_bin = np.sum(a[i, :, 1, j]< 0)
+                print(empty_bin, self.runner.num_reps)
+                for k in range(1, num_points):
+                    if empty_bin == self.runner.num_reps:
+                        result[i, j, k - 1] = -1
+                    else:
+                        result[i, j, k - 1] = (
+                            np.sum(a[i, :, 0, j] == a[i, :, k, j]) / (self.runner.num_reps - empty_bin)
+                        )
+        
+        return result
+
+    def expected_cov(self, r, model="hudson"):
+        if self.num_lineages == 2:
+            if model == "hudson":
+                return (r + 18) / (r**2 + 13 * r + 18)
+            elif model == "smc":
+                return 1 / (1 + r)
+            elif model == "smc_prime":
+                # approximately
+                return 1 - 2 * r / 3
+            else:
+                raise ValueError("not implemented")
+
+    def plot_line(self, a, b, x_label, y_label, filename):
+        marker = itertools.cycle((".", "+", "v", "^"))
+        for i, model in enumerate(self.runner.models):
+            x = a[i]
+            plt.plot(
+                b, x, label=model, marker=next(marker), markersize=10, linestyle="None"
+            )
+        exp = np.array([self.expected_cov(2 * r, "hudson") for r in b])
+        plt.plot(b, exp, marker="o", label=f"exp_hudson")
+        plt.xlabel(x_label)
+        plt.ylabel(y_label)
+        plt.legend(loc="upper right")
+        plt.savefig(filename, dpi=72)
+        plt.close("all")
+
+    def plot(self, a):
+        # a shape: num_models, num_bins, num_points
+        a = self.compute_cov(a)
+        num_points = int(self.size // self.num_bins)
+        b = (
+            np.arange(1, num_points)
+            / self.num_points
+            * self.runner.sequence_length
+            * self.runner.rho
+            / 2
+        )
+        for bin_idx in range(self.num_bins):
+            f = self._build_filename(f"_{bin_idx}")
+            self.plot_line(a[:, bin_idx, :], b[1:], "rho", "cov", f)
+
 
 class EdgeStat(TsStat):
     def __init__(self, runner):
@@ -501,10 +606,10 @@ def run_all(suite, output_dir, seed):
     rho = 1e-4
     #rho = 5e-5
     L = 1e5
-    num_reps = 1000
+    num_reps = 10
     apply_rec_correction = True
 
-    for n in [2,4,8,20]:
+    for n in [20]:
         print(f"[+] Running models for n={n}")
         all_stats = []
         S = TsStatRunner(num_reps, n, rho, L, output_dir, seed)
@@ -521,6 +626,7 @@ def main():
         "CovDecay",
         "CovDecayIK",
         "CovDecayKL",
+        "BinnedCovDecay",
         "AutoCovD100",
         "AutoCovD1000",
         "AutoCovD10000",
