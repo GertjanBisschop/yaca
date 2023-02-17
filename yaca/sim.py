@@ -811,14 +811,14 @@ def collect_marked_segments(segment, collect):
                     collect[-1].right = curr_interval.right
                 else:
                     collect.append(
-                        sim.AncestryInterval(
+                        AncestryInterval(
                             curr_interval.left, curr_interval.right, sum_ancestral_to
                         )
                     )
                     empty = False
             else:
                 collect.append(
-                    sim.AncestryInterval(
+                    AncestryInterval(
                         curr_interval.left, curr_interval.right, sum_ancestral_to
                     )
                 )
@@ -902,7 +902,7 @@ def init_segment_tracker(lineages, rng, rho, t, idxs):
     return S
 
 
-def process_lineage_pair(lineages, rng, rho, t, idxs, parent_node, n, picked_idx=-1):
+def process_lineage_pair(lineages, tables, rng, rho, t, idxs, parent_node, n, picked_idx=-1):
     S = init_segment_tracker(lineages, rng, rho, t, idxs)
     if picked_idx == -1:
         picked_idx = rng.integers(S.overlap_count)

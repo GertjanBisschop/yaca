@@ -3,9 +3,9 @@ import pytest
 import random
 import numpy as np
 import msprime
+import tskit
 
 import yaca.sim as sim
-import yaca.sim_hudson as simh
 
 
 class TestInverseExpectationFunction:
@@ -27,6 +27,7 @@ class TestInverseExpectationFunction:
             assert np.isclose(
                 sim.inverse_expectation_function_extended(f_x, rho, k, T), x
             )
+
 
 @pytest.mark.overlap
 class TestIntersect:
@@ -86,21 +87,24 @@ class TestIntersect:
 
     def test_intersect_segment4(self):
         edges = [random.random() for _ in range(10)]
-        a = sim.Lineage(0, [
-            sim.AncestryInterval(1.0, edges[0], 0),
-            sim.AncestryInterval(edges[1], edges[2], 0),
-            sim.AncestryInterval(edges[4], edges[6], 0),
-                ]   
-            )
-        b = sim.Lineage(0, [
-            sim.AncestryInterval(edges[0], edges[1], 0),
-            sim.AncestryInterval(edges[1], edges[2], 0),
-            sim.AncestryInterval(edges[3], edges[5], 0),
-                ]   
-            )
+        a = sim.Lineage(
+            0,
+            [
+                sim.AncestryInterval(1.0, edges[0], 0),
+                sim.AncestryInterval(edges[1], edges[2], 0),
+                sim.AncestryInterval(edges[4], edges[6], 0),
+            ],
+        )
+        b = sim.Lineage(
+            0,
+            [
+                sim.AncestryInterval(edges[0], edges[1], 0),
+                sim.AncestryInterval(edges[1], edges[2], 0),
+                sim.AncestryInterval(edges[3], edges[5], 0),
+            ],
+        )
         overlap, overlap_length = sim.intersect_lineages(a, b)
         exp_length = (edges[2] - edges[1]) + (edges[5] - edges[4])
-
 
     def test_remove_segment(self):
         lineage = sim.Lineage(
@@ -257,38 +261,6 @@ class TestAux:
         result = sim.merge_lineages_test((lineage1, lineage2))
 
 
-@pytest.mark.hudson
-class TestSimHudson:
-    @pytest.mark.full_sim
-    def test_time_to_next_event(self):
-        for _ in range(100):
-            rng = random.Random()
-            n = 4
-            rho = 1e-4
-            sequence_length = 10_000
-            lineages = [
-                self.generate_lineage(sequence_length, i, rng) for i in range(n)
-            ]
-
-            t, _, _ = simh.time_to_next_coalescent_event(lineages, rho, 0)
-            assert t > 0
-            assert False
-
-    def generate_ancestry(self, L, rng):
-        intervals = [0]
-        while intervals[-1] < L:
-            new = rng.uniform(1, L / 10)
-            intervals.append(new + intervals[-1])
-        return [
-            sim.AncestryInterval(left, right, 1)
-            for left, right in zip(intervals[::2], intervals[1::2])
-        ]
-
-    def generate_lineage(self, L, i, rng):
-        ancestry = self.generate_ancestry(L, rng)
-        node_time = rng.random()
-        return sim.Lineage(i, ancestry, node_time)
-
 class TestExtractLineages:
     def test_extraction(self):
         n = 16
@@ -300,36 +272,42 @@ class TestExtractLineages:
 
         coal_time_msp = np.zeros(num_replicates, dtype=np.float64)
         coal_time_yaca = np.zeros_like(coal_time_msp)
-        
+
         _, lineages, lineages_all = self.generate_lineages(n, rho, L, run_until)
-        total, ownt, pairs_count = sim.update_total_overlap_brute_force(lineages, run_until)
-        total_all, ownt_all, pairs_count_all = sim.update_total_overlap_brute_force(lineages_all, run_until)
-        
+        total, ownt, pairs_count = sim.update_total_overlap_brute_force(
+            lineages, run_until
+        )
+        total_all, ownt_all, pairs_count_all = sim.update_total_overlap_brute_force(
+            lineages_all, run_until
+        )
+
         assert total == total_all
         assert pairs_count == pairs_count_all
         assert ownt == ownt_all
 
     def ts_to_lineages(self, ts, include_all=False):
         lineages = dict()
-        ts = ts.simplify() # remove unary nodes
+        ts = ts.simplify()  # remove unary nodes
         num_samples = ts.num_samples
-        
+
         for tree in ts.trees():
             for root in tree.roots:
-                ancestral_to = tree.num_samples(root) 
+                ancestral_to = tree.num_samples(root)
                 if ancestral_to < num_samples or include_all:
                     left, right = tree.interval.left, tree.interval.right
-                    new_ancestry_interval = sim.AncestryInterval(left, right, ancestral_to)
+                    new_ancestry_interval = sim.AncestryInterval(
+                        left, right, ancestral_to
+                    )
                     if root not in lineages:
-                        lineages[root] = sim.Lineage(root, [new_ancestry_interval], tree.time(root))
+                        lineages[root] = sim.Lineage(
+                            root, [new_ancestry_interval], tree.time(root)
+                        )
                     else:
                         prev = lineages[root].ancestry[-1]
                         if left == prev.right and ancestral_to == prev.ancestral_to:
-                            prev.right = right            
+                            prev.right = right
                         else:
-                           lineages[root].ancestry.append(new_ancestry_interval)
-        
-
+                            lineages[root].ancestry.append(new_ancestry_interval)
 
         return list(lineages.values())
 
@@ -337,7 +315,7 @@ class TestExtractLineages:
         ret = False
 
         while not ret:
-            seed = random.randint(1,2**16)
+            seed = random.randint(1, 2**16)
             ts = msprime.sim_ancestry(
                 samples=n,
                 sequence_length=L,
@@ -346,11 +324,95 @@ class TestExtractLineages:
                 discrete_genome=False,
                 population_size=1,
                 end_time=run_until,
-                random_seed=seed
+                random_seed=seed,
             )
-            ret = max(tree.num_roots for tree in ts.trees())>1
-        
+            ret = max(tree.num_roots for tree in ts.trees()) > 1
+
         lineages = self.ts_to_lineages(ts)
         lineages_all = self.ts_to_lineages(ts, True)
 
         return ts, lineages, lineages_all
+
+
+class TestUnion:
+    def test_process_lineages(self):
+        expd = self.exp_results()
+        for picked_idx in 1, 3:
+            lineages = self.get_lineages()
+            tables = tskit.TableCollection(54)
+            tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
+            rng = np.random.default_rng(seed=42)
+            sim.process_lineage_pair(lineages, tables, rng, 0.25, 1.0, [0, 1], 2, 3, picked_idx)
+            tables.edges.squash()
+            tables.assert_equals(
+                expd[picked_idx][0], ignore_metadata=True, ignore_provenance=True
+            )
+
+            for el, ol in zip(expd[picked_idx][1], lineages):
+                assert len(el) == len(ol.ancestry)
+                for es, os in zip(el, ol.ancestry):
+                    assert es[0] == os.left
+                    assert es[1] == os.right
+                    assert es[2] == os.ancestral_to
+
+    def exp_results(self):
+
+        lineages1_ancestry = [
+            [(9, 14.151587519468295, 1), (29.683090571277827, 30, 1), (32, 40, 1)],
+            [(14.46828483981249, 15, 1), (17, 23, 1), (35, 54, 1)],
+            [
+                (12, 14.151587519468295, 1),
+                (14.151587519468295, 14.46828483981249, 2),
+                (14.46828483981249, 15, 1),
+                (17, 29.683090571277827, 1),
+            ],
+        ]
+
+        tables1 = tskit.TableCollection(54)
+        tables1.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
+        tables1.edges.add_row(14.151587519468295, 15.0, 0, 2)
+        tables1.edges.add_row(17.0, 29.683090571277827, 0, 2)
+        tables1.edges.add_row(12.0, 14.46828483981249, 1, 2)
+
+        lineages3_ancestry = [
+            [(9, 15, 1), (17, 30, 1), (32, 35.60308750316454, 1)],
+            [(12, 14.46828483981249, 1)],
+            [
+                (14.46828483981249, 15, 1),
+                (17, 23, 1),
+                (35, 35.60308750316454, 1),
+                (35.60308750316454, 40, 2),
+                (40, 54, 1),
+            ],
+        ]
+
+        tables3 = tskit.TableCollection(54)
+        tables3.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
+        tables3.edges.add_row(35.60308750316454, 40.0, 0, 2)
+        tables3.edges.add_row(14.46828483981249, 15.0, 1, 2)
+        tables3.edges.add_row(17.0, 23.0, 1, 2)
+        tables3.edges.add_row(35.0, 54.0, 1, 2)
+
+        return {1: [tables1, lineages1_ancestry], 3: [tables3, lineages3_ancestry]}
+
+    def get_lineages(self):
+        a = sim.Lineage(
+            0,
+            [
+                sim.AncestryInterval(9, 15, 1),
+                sim.AncestryInterval(17, 30, 1),
+                sim.AncestryInterval(32, 40, 1),
+            ],
+            0.1,
+        )
+        b = sim.Lineage(
+            1,
+            [
+                sim.AncestryInterval(12, 15, 1),
+                sim.AncestryInterval(17, 23, 1),
+                sim.AncestryInterval(35, 54, 1),
+            ],
+            0.5,
+        )
+
+        return [a, b]
