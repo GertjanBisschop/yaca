@@ -628,3 +628,322 @@ def merge_lineages_test(lineages):
         i += 1
 
     return True
+
+
+################### recording unary nodes #####################
+
+
+class Segment:
+    """
+    Doubly linked list implementation
+    """
+
+    def __init__(self):
+        self.left = 0
+        self.right = math.inf
+        self.next = None
+        self.prev = None
+        self.mark = 0
+        self.is_bp = 0
+        self.ancestral_to = np.zeros(2, dtype=np.uint64)
+
+    @staticmethod
+    def show_chain(seg):
+        s = ""
+        while seg is not None:
+            s += (
+                f"[{seg.left} ({seg.is_bp}), {seg.right}: {np.sum(seg.ancestral_to)}], "
+            )
+            seg = seg.next
+        return s[:-2]
+
+    def __lt__(self, other):
+        return (self.left, self.right) < (other.left, other.right)
+
+
+class SegmentTracker:
+    """
+    Keeps track of the absence and presence of particular segments in n overlapping lineages
+    """
+
+    def __init__(self, L):
+        self.L = L
+        self.chain = self._make_segment(0, L, None)
+        self.overlap_count = 0
+
+    @property
+    def state(self):
+        return Segment.show_chain(self.chain)
+
+    def _split(self, seg, bp, is_bp=0):
+        right = self._make_segment(bp, seg.right, seg.next, is_bp, seg.ancestral_to)
+        if seg.next is not None:
+            right.next = seg.next
+            seg.next.prev = right
+        right.prev = seg
+        seg.next = right
+        seg.right = bp
+
+    def _make_segment(self, left, right, next_seg, is_bp=0, ancestral_to=None):
+        seg = Segment()
+        seg.left = left
+        seg.right = right
+        seg.next = next_seg
+        seg.is_bp = is_bp
+        if isinstance(ancestral_to, np.ndarray):
+            seg.ancestral_to = ancestral_to.copy()
+        return seg
+
+    def increment_interval(self, left, right, lin, bp_flag, ancestral_to):
+        """
+        if breakpoint than breakpoint is left
+        """
+        curr_interval = self.chain
+        # add in ancestral_to
+        while left < right:
+            if curr_interval.left == left:
+                curr_interval.is_bp += bp_flag * 2**lin
+                bp_flag = 0
+                if curr_interval.right <= right:
+                    curr_interval.ancestral_to[lin] = ancestral_to
+                    left = curr_interval.right
+                    curr_interval = curr_interval.next
+                else:
+                    self._split(curr_interval, right)
+                    curr_interval.ancestral_to[lin] = ancestral_to
+                    break
+            else:
+                if curr_interval.right <= left:  # code changed here from < to <=
+                    curr_interval = curr_interval.next
+                else:
+                    self._split(curr_interval, left, bp_flag * 2**lin)
+                    bp_flag = 0
+                    curr_interval = curr_interval.next
+
+    def remove_interval(self, seg):
+        seg.prev.next = seg.next
+        seg.next.prev = seg.prev
+
+    def count_overlapping_segments(self):
+        count = 0
+        seg = self.chain
+        while seg is not None:
+            if (seg.is_bp > 0) and (np.all(seg.ancestral_to > 0)):
+                count += 1
+            seg = seg.next
+        self.overlap_count = count + 1
+
+
+# process a pair of overlapping lineages to generate a coalescence event
+
+
+def record_edges(segment, child_node, parent_node, tables, bound, idx, reverse=True):
+    # incorporate bound
+    curr_interval = segment
+    if curr_interval is not None:
+        bp = curr_interval.is_bp
+    else:
+        bp = 0
+    if reverse:
+        curr_interval = curr_interval.prev
+
+    while curr_interval is not None:
+        if bp == idx + 1:
+            break
+        if curr_interval.ancestral_to[idx] > 0:
+            tables.edges.add_row(
+                curr_interval.left, curr_interval.right, child_node, parent_node
+            )
+            assert curr_interval.mark == 0, "interval already marked"
+            curr_interval.mark = curr_interval.ancestral_to[idx]
+            curr_interval.ancestral_to[idx] = 0
+
+        if reverse:
+            bp = curr_interval.is_bp
+            curr_interval = curr_interval.prev
+        else:
+            curr_interval = curr_interval.next
+            if curr_interval is not None:
+                bp = curr_interval.is_bp
+
+    return curr_interval
+
+
+def record_coalescence(segment, child_nodes, parent_node, tables, n):
+    curr_interval = segment
+    overlap_bp = False
+    while not overlap_bp:
+        sum_ancestral_to = np.sum(curr_interval.ancestral_to)
+        overlapping = sum_ancestral_to > curr_interval.ancestral_to[0]
+        if overlapping:
+            if sum_ancestral_to < n:
+                curr_interval.mark = sum_ancestral_to
+        for lin in range(2):
+            if curr_interval.ancestral_to[lin] > 0:
+                tables.edges.add_row(
+                    curr_interval.left,
+                    curr_interval.right,
+                    child_nodes[lin],
+                    parent_node,
+                )
+                curr_interval.ancestral_to[lin] = 0
+        curr_interval = curr_interval.next
+        if curr_interval is not None:
+            overlap_bp = overlapping and curr_interval.is_bp > 0
+        else:
+            break
+
+    return curr_interval
+
+
+def collect_marked_segments(segment, collect):
+    empty = len(collect) == 0
+    curr_interval = segment
+
+    while curr_interval is not None:
+        if curr_interval.mark > 0:
+            sum_ancestral_to = curr_interval.mark
+            if not empty:
+                if (
+                    collect[-1].right == curr_interval.left
+                    and collect[-1].ancestral_to == sum_ancestral_to
+                ):
+                    collect[-1].right = curr_interval.right
+                else:
+                    collect.append(
+                        sim.AncestryInterval(
+                            curr_interval.left, curr_interval.right, sum_ancestral_to
+                        )
+                    )
+                    empty = False
+            else:
+                collect.append(
+                    sim.AncestryInterval(
+                        curr_interval.left, curr_interval.right, sum_ancestral_to
+                    )
+                )
+                empty = False
+        curr_interval = curr_interval.next
+
+    return empty
+
+
+def collect_ancestral_segments(segment, collect, bound, idx):
+    empty = len(collect) == 0
+    curr_interval = segment
+
+    while curr_interval is not None and curr_interval.left < bound:
+        if curr_interval.ancestral_to[idx] > 0:
+            if not empty:
+                if (
+                    collect[-1].right == curr_interval.left
+                    and collect[-1].ancestral_to == curr_interval.ancestral_to[idx]
+                ):
+                    collect[-1].right = curr_interval.right
+                else:
+                    collect.append(
+                        AncestryInterval(
+                            curr_interval.left,
+                            curr_interval.right,
+                            curr_interval.ancestral_to[idx],
+                        )
+                    )
+                    empty = False
+            else:
+                collect.append(
+                    AncestryInterval(
+                        curr_interval.left,
+                        curr_interval.right,
+                        curr_interval.ancestral_to[idx],
+                    )
+                )
+                empty = False
+        curr_interval = curr_interval.next
+
+    return empty
+
+
+def generate_breakpoints(interval, rho, t, node_time, rng):
+    total_branch_length = t - node_time
+    expected_num_breakpoints = rho / 2 * interval.span * total_branch_length
+    num_breakpoints = rng.poisson(expected_num_breakpoints)
+    if num_breakpoints == 0:
+        return []
+    else:
+        breakpoints = interval.span * rng.random(num_breakpoints) + interval.left
+        breakpoints.sort()
+
+    return breakpoints
+
+
+def init_segment_tracker(lineages, rng, rho, t, idxs):
+    # given two overlapping lineages with idx a and b
+    L = max(lineages[i].right for i in idxs)
+    l = min(lineages[i].left for i in idxs)
+    S = SegmentTracker(L)
+    S.chain.left = l
+
+    for i, lin_idx in enumerate(idxs):
+        for segment in lineages[lin_idx].ancestry:
+            left = segment.left
+            bp_flag = 0
+            for breakpoint in generate_breakpoints(
+                segment, rho, t, lineages[lin_idx].node_time, rng
+            ):
+                right = breakpoint
+                S.increment_interval(left, right, i, bp_flag, segment.ancestral_to)
+                left = right
+                bp_flag = 1
+            right = segment.right
+            S.increment_interval(left, right, i, bp_flag, segment.ancestral_to)
+
+    S.count_overlapping_segments()
+
+    return S
+
+
+def process_lineage_pair(lineages, rng, rho, t, idxs, parent_node, n, picked_idx=-1):
+    S = init_segment_tracker(lineages, rng, rho, t, idxs)
+    if picked_idx == -1:
+        picked_idx = rng.integers(S.overlap_count)
+    # go to picked segment
+    interval_count = 0
+    curr_interval = S.chain
+    while np.any(curr_interval.ancestral_to == 0):
+        curr_interval = curr_interval.next
+    while interval_count < picked_idx:
+        if curr_interval.next.is_bp > 0 and np.all(curr_interval.ancestral_to > 0):
+            interval_count += 1
+        curr_interval = curr_interval.next
+    child_nodes = [lineages[idx].node for idx in idxs]
+    # register edges on the left of the segment and update ancestral_to
+    for i, lin in enumerate(idxs):
+        bound = lineages[lin].left
+        record_edges(
+            curr_interval, child_nodes[i], parent_node, tables, bound, i, reverse=True
+        )
+    # register coalescing segment and make new lineage and update ancestral_to
+    curr_interval = record_coalescence(
+        curr_interval, child_nodes, parent_node, tables, n
+    )
+    for i, lin in enumerate(idxs):
+        bound = lineages[lin].right
+        record_edges(
+            curr_interval, child_nodes[i], parent_node, tables, bound, i, reverse=False
+        )
+
+    new_lineage = []
+    collect_marked_segments(S.chain, new_lineage)
+    # update the ancestry of lineages in idxs
+    delete_stack = []
+    for idx, lin in enumerate(idxs):
+        collect = []
+        to_delete = collect_ancestral_segments(
+            S.chain, collect, lineages[lin].right, idx
+        )
+        lineages[lin].ancestry = collect
+        if to_delete:
+            delete_stack.append(lin)
+    for idx in sorted(delete_stack, reverse=True):
+        del lineages[idx]
+    lineages.append(Lineage(parent_node, new_lineage, t))
