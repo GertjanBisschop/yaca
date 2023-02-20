@@ -425,8 +425,40 @@ def sample_rejection(lineages, rng):
 
     return a, b, overlap, overlap_length
 
+def process_lineage_pair_overlap_only(lineages, tables, idxs, parent_node, t, rng_numpy, n, rho):
+    a, b = idxs
+    overlap, overlap_length = intersect_lineages(lineages[a], lineages[b])
 
-def sim_yaca(n, rho, L, seed=None, verbose=False):
+    #if verbose:
+    #    print("coalescing lineages:", lineages[a].node, lineages[b].node)
+    node_times = (lineages[a].node_time, lineages[b].node_time)
+    coalesced_segment = pick_segment(
+        overlap, rho, t, node_times, rng_numpy
+    )
+    c = Lineage(parent_node, coalesced_segment, t)
+    for interval in coalesced_segment:
+        for lineage in lineages[a], lineages[b]:
+            tables.edges.add_row(
+                interval.left, interval.right, c.node, lineage.node
+            )
+
+    # remove interval from old lineage
+    to_delete = []
+    for lineage_idx in a, b:
+        updated_ancestry = list(remove_segment(lineages[lineage_idx], c.ancestry))
+        lineages[lineage_idx].ancestry = updated_ancestry
+        if len(updated_ancestry) == 0:
+            to_delete.append(lineage_idx)
+    for lineage_idx in sorted(to_delete, reverse=True):
+        del lineages[lineage_idx]
+
+    # filter out intervals that are ancestral to all samples
+    c.ancestry = [segment for segment in c.ancestry if segment.ancestral_to < n]
+    if len(c.ancestry) > 0:
+        lineages.append(c)
+
+
+def sim_yaca(n, rho, L, seed=None, verbose=False, union=True):
     rng = random.Random(seed)
     rng_numpy = np.random.default_rng(seed)
     tables = tskit.TableCollection(L)
@@ -441,8 +473,10 @@ def sim_yaca(n, rho, L, seed=None, verbose=False):
 
     if verbose:
         check_progress(lineages)
-
-    while not fully_coalesced(lineages, n):
+    
+    count = 0
+    while not fully_coalesced(lineages, n) and count < 30:
+        count += 1
         # draw new event time and sample lineages
         rec_rate_adj = expected_fraction_observed_rec_events(len(lineages))
         # rec_rate_adj = 1
@@ -451,38 +485,14 @@ def sim_yaca(n, rho, L, seed=None, verbose=False):
         )
         assert new_event_time < math.inf, "Infinite waiting time until next event"
         t += new_event_time
-        overlap, overlap_length = intersect_lineages(lineages[a], lineages[b])
 
-        if verbose:
-            print("coalescing lineages:", lineages[a].node, lineages[b].node)
-        node_times = (lineages[a].node_time, lineages[b].node_time)
-        coalesced_segment = pick_segment(
-            overlap, rho * rec_rate_adj, t, node_times, rng_numpy
-        )
-        c = Lineage(len(nodes), coalesced_segment, t)
-        for interval in coalesced_segment:
-            for lineage in lineages[a], lineages[b]:
-                tables.edges.add_row(
-                    interval.left, interval.right, c.node, lineage.node
-                )
-
+        parent_node = len(nodes)
         nodes.append(Node(time=t))
-
-        # remove interval from old lineage
-        to_delete = []
-        for lineage_idx in a, b:
-            updated_ancestry = list(remove_segment(lineages[lineage_idx], c.ancestry))
-            lineages[lineage_idx].ancestry = updated_ancestry
-            if len(updated_ancestry) == 0:
-                to_delete.append(lineage_idx)
-        for lineage_idx in sorted(to_delete, reverse=True):
-            del lineages[lineage_idx]
-
-        # filter out intervals that are ancestral to all samples
-        c.ancestry = [segment for segment in c.ancestry if segment.ancestral_to < n]
-        if len(c.ancestry) > 0:
-            lineages.append(c)
-
+        if union:
+            process_lineage_pair(lineages, tables, (a, b), parent_node, t, rng_numpy, n, rho * rec_rate_adj)        
+        else:
+            process_lineage_pair_overlap_only(lineages, tables, (a, b), parent_node, t, rng_numpy, n, rho * rec_rate_adj)
+        
         if verbose:
             check_progress(lineages)
 
@@ -738,7 +748,6 @@ class SegmentTracker:
 
 
 def record_edges(segment, child_node, parent_node, tables, bound, idx, reverse=True):
-    # incorporate bound
     curr_interval = segment
     if curr_interval is not None:
         bp = curr_interval.is_bp
@@ -752,7 +761,7 @@ def record_edges(segment, child_node, parent_node, tables, bound, idx, reverse=T
             break
         if curr_interval.ancestral_to[idx] > 0:
             tables.edges.add_row(
-                curr_interval.left, curr_interval.right, child_node, parent_node
+                curr_interval.left, curr_interval.right, parent_node, child_node
             )
             assert curr_interval.mark == 0, "interval already marked"
             curr_interval.mark = curr_interval.ancestral_to[idx]
@@ -775,16 +784,15 @@ def record_coalescence(segment, child_nodes, parent_node, tables, n):
     while not overlap_bp:
         sum_ancestral_to = np.sum(curr_interval.ancestral_to)
         overlapping = sum_ancestral_to > curr_interval.ancestral_to[0]
-        if overlapping:
-            if sum_ancestral_to < n:
-                curr_interval.mark = sum_ancestral_to
+        if sum_ancestral_to < n:
+            curr_interval.mark = sum_ancestral_to
         for lin in range(2):
             if curr_interval.ancestral_to[lin] > 0:
                 tables.edges.add_row(
                     curr_interval.left,
                     curr_interval.right,
-                    child_nodes[lin],
                     parent_node,
+                    child_nodes[lin],
                 )
                 curr_interval.ancestral_to[lin] = 0
         curr_interval = curr_interval.next
@@ -902,7 +910,7 @@ def init_segment_tracker(lineages, rng, rho, t, idxs):
     return S
 
 
-def process_lineage_pair(lineages, tables, rng, rho, t, idxs, parent_node, n, picked_idx=-1):
+def process_lineage_pair(lineages, tables, idxs, parent_node, t, rng, n, rho, picked_idx=-1):
     S = init_segment_tracker(lineages, rng, rho, t, idxs)
     if picked_idx == -1:
         picked_idx = rng.integers(S.overlap_count)
@@ -946,4 +954,5 @@ def process_lineage_pair(lineages, tables, rng, rho, t, idxs, parent_node, n, pi
             delete_stack.append(lin)
     for idx in sorted(delete_stack, reverse=True):
         del lineages[idx]
-    lineages.append(Lineage(parent_node, new_lineage, t))
+    if len(new_lineage) > 0:
+        lineages.append(Lineage(parent_node, new_lineage, t))

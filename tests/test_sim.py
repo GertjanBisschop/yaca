@@ -333,6 +333,15 @@ class TestExtractLineages:
 
         return ts, lineages, lineages_all
 
+class TestIntersection:
+
+    def test_sim(self):
+        seeds = np.random.randint(1, 2**16, 10)
+        for seed in seeds:
+            ts = sim.sim_yaca(4, 0.1, 100, seed=seed, union=False)
+            for tree in ts.trees():
+                assert tree.num_roots == 1
+
 
 class TestUnion:
     def test_process_lineages(self):
@@ -342,7 +351,7 @@ class TestUnion:
             tables = tskit.TableCollection(54)
             tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
             rng = np.random.default_rng(seed=42)
-            sim.process_lineage_pair(lineages, tables, rng, 0.25, 1.0, [0, 1], 2, 3, picked_idx)
+            sim.process_lineage_pair(lineages, tables, [0, 1], 2, 1.0, rng, 3, 0.25, picked_idx)
             tables.edges.squash()
             tables.assert_equals(
                 expd[picked_idx][0], ignore_metadata=True, ignore_provenance=True
@@ -370,9 +379,9 @@ class TestUnion:
 
         tables1 = tskit.TableCollection(54)
         tables1.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
-        tables1.edges.add_row(14.151587519468295, 15.0, 0, 2)
-        tables1.edges.add_row(17.0, 29.683090571277827, 0, 2)
-        tables1.edges.add_row(12.0, 14.46828483981249, 1, 2)
+        tables1.edges.add_row(14.151587519468295, 15.0, 2, 0)
+        tables1.edges.add_row(17.0, 29.683090571277827, 2, 0)
+        tables1.edges.add_row(12.0, 14.46828483981249, 2, 1)
 
         lineages3_ancestry = [
             [(9, 15, 1), (17, 30, 1), (32, 35.60308750316454, 1)],
@@ -388,10 +397,10 @@ class TestUnion:
 
         tables3 = tskit.TableCollection(54)
         tables3.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
-        tables3.edges.add_row(35.60308750316454, 40.0, 0, 2)
-        tables3.edges.add_row(14.46828483981249, 15.0, 1, 2)
-        tables3.edges.add_row(17.0, 23.0, 1, 2)
-        tables3.edges.add_row(35.0, 54.0, 1, 2)
+        tables3.edges.add_row(35.60308750316454, 40.0, 2, 0)
+        tables3.edges.add_row(14.46828483981249, 15.0, 2, 1)
+        tables3.edges.add_row(17.0, 23.0, 2, 1)
+        tables3.edges.add_row(35.0, 54.0, 2, 1)
 
         return {1: [tables1, lineages1_ancestry], 3: [tables3, lineages3_ancestry]}
 
@@ -416,3 +425,10 @@ class TestUnion:
         )
 
         return [a, b]
+
+    def test_sim(self):
+        seeds = np.random.randint(1, 2**16, 10)
+        for seed in seeds:
+            ts = sim.sim_yaca(4, 0.1, 100, seed=seed, verbose=True, union=True)
+            for tree in ts.trees():
+                assert tree.num_roots == 1
