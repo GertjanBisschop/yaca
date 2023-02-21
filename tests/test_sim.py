@@ -427,7 +427,7 @@ class TestUnion:
         return [a, b]
 
     def test_sim(self):
-        seeds = np.random.randint(1, 2**16, 10)
+        seeds = np.random.randint(1, 2**16, 100)
         for seed in seeds:
             ts = sim.sim_yaca(4, 0.1, 100, seed=seed, verbose=True, union=True)
             for tree in ts.trees():
