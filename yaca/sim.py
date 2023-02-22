@@ -474,9 +474,7 @@ def sim_yaca(n, rho, L, seed=None, verbose=False, union=True):
     if verbose:
         check_progress(lineages)
     
-    count = 0
-    while not fully_coalesced(lineages, n) and count < 30:
-        count += 1
+    while not fully_coalesced(lineages, n):
         # draw new event time and sample lineages
         rec_rate_adj = expected_fraction_observed_rec_events(len(lineages))
         # rec_rate_adj = 1
@@ -656,6 +654,7 @@ class Segment:
         self.mark = 0
         self.is_bp = 0
         self.ancestral_to = np.zeros(2, dtype=np.uint64)
+        self.internal_bp = False
 
     @staticmethod
     def show_chain(seg):
@@ -779,6 +778,7 @@ def record_edges(segment, child_node, parent_node, tables, bound, idx, reverse=T
 
 
 def record_coalescence(segment, child_nodes, parent_node, tables, n):
+    # mark the correct segment as starting with an internal breakpoint
     curr_interval = segment
     overlap_bp = False
     while not overlap_bp:
@@ -797,7 +797,11 @@ def record_coalescence(segment, child_nodes, parent_node, tables, n):
                 curr_interval.ancestral_to[lin] = 0
         curr_interval = curr_interval.next
         if curr_interval is not None:
-            overlap_bp = overlapping and curr_interval.is_bp > 0
+            if curr_interval.is_bp > 0:
+                if overlapping:
+                    overlap_bp = True
+                else:
+                    curr_interval.internal_bp = True
         else:
             break
 
@@ -805,33 +809,43 @@ def record_coalescence(segment, child_nodes, parent_node, tables, n):
 
 
 def collect_marked_segments(segment, collect):
-    empty = len(collect) == 0
+    empty = True
+    temp = []
     curr_interval = segment
 
     while curr_interval is not None:
         if curr_interval.mark > 0:
+            if curr_interval.internal_bp:
+                if len(temp) > 0:
+                    collect.append(temp)
+                    temp = []
+                    empty = True
+            
             sum_ancestral_to = curr_interval.mark
             if not empty:
                 if (
-                    collect[-1].right == curr_interval.left
-                    and collect[-1].ancestral_to == sum_ancestral_to
+                    temp[-1].right == curr_interval.left
+                    and temp[-1].ancestral_to == sum_ancestral_to
                 ):
-                    collect[-1].right = curr_interval.right
+                    temp[-1].right = curr_interval.right
                 else:
-                    collect.append(
+                    temp.append(
                         AncestryInterval(
                             curr_interval.left, curr_interval.right, sum_ancestral_to
                         )
                     )
                     empty = False
             else:
-                collect.append(
+                temp.append(
                     AncestryInterval(
                         curr_interval.left, curr_interval.right, sum_ancestral_to
                     )
                 )
                 empty = False
         curr_interval = curr_interval.next
+    
+    if len(temp) > 0:
+        collect.append(temp)
 
     return empty
 
@@ -917,8 +931,10 @@ def process_lineage_pair(lineages, tables, idxs, parent_node, t, rng, n, rho, pi
     # go to picked segment
     interval_count = 0
     curr_interval = S.chain
+    # move to first overlapping interval
     while np.any(curr_interval.ancestral_to == 0):
         curr_interval = curr_interval.next
+    # move to overlapping interval picked to coalesce
     while interval_count < picked_idx:
         if curr_interval.next.is_bp > 0 and np.all(curr_interval.ancestral_to > 0):
             interval_count += 1
@@ -940,8 +956,8 @@ def process_lineage_pair(lineages, tables, idxs, parent_node, t, rng, n, rho, pi
             curr_interval, child_nodes[i], parent_node, tables, bound, i, reverse=False
         )
 
-    new_lineage = []
-    collect_marked_segments(S.chain, new_lineage)
+    new_lineages = []
+    collect_marked_segments(S.chain, new_lineages)
     # update the ancestry of lineages in idxs
     delete_stack = []
     for idx, lin in enumerate(idxs):
@@ -954,5 +970,6 @@ def process_lineage_pair(lineages, tables, idxs, parent_node, t, rng, n, rho, pi
             delete_stack.append(lin)
     for idx in sorted(delete_stack, reverse=True):
         del lineages[idx]
-    if len(new_lineage) > 0:
-        lineages.append(Lineage(parent_node, new_lineage, t))
+    if len(new_lineages) > 0:
+        for lineage in new_lineages:
+            lineages.append(Lineage(parent_node, lineage, t))

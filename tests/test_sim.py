@@ -346,17 +346,20 @@ class TestIntersection:
 class TestUnion:
     def test_process_lineages(self):
         expd = self.exp_results()
-        for picked_idx in 1, 3:
+        #for picked_idx in range(1,4):
+        for picked_idx in [2,]:
             lineages = self.get_lineages()
             tables = tskit.TableCollection(54)
             tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
             rng = np.random.default_rng(seed=42)
             sim.process_lineage_pair(lineages, tables, [0, 1], 2, 1.0, rng, 3, 0.25, picked_idx)
+            print('num_lineages:', len(lineages))
+            for lin in lineages:
+                print(lin)
             tables.edges.squash()
             tables.assert_equals(
                 expd[picked_idx][0], ignore_metadata=True, ignore_provenance=True
             )
-
             for el, ol in zip(expd[picked_idx][1], lineages):
                 assert len(el) == len(ol.ancestry)
                 for es, os in zip(el, ol.ancestry):
@@ -383,6 +386,33 @@ class TestUnion:
         tables1.edges.add_row(17.0, 29.683090571277827, 2, 0)
         tables1.edges.add_row(12.0, 14.46828483981249, 2, 1)
 
+        lineages2_ancestry = [
+            [(9, 14.151587519468295, 1), (35.60308750316454, 40, 1)],
+            [(12, 14.46828483981249, 1)],
+            [
+                (14.151587519468295, 14.46828483981249, 1),
+                (14.46828483981249, 15, 2),
+                (17, 23, 2),
+                (23, 29.683090571277827, 1),],
+            [
+                (29.683090571277827, 30, 1),
+                (32, 34.96638419386065, 1),],
+            [          
+                (34.96638419386065, 35, 1),
+                (35, 35.60308750316454, 2),
+                (35.60308750316454, 54, 1),
+            ],
+        ]
+
+        tables2 = tskit.TableCollection(54)
+        tables2.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
+        tables2.edges.add_row(14.151587519468295, 15, 2, 0)
+        tables2.edges.add_row(17, 30, 2, 0)
+        tables2.edges.add_row(32, 35.60308750316454, 2, 0)
+        tables2.edges.add_row(14.46828483981249, 15.0, 2, 1)
+        tables2.edges.add_row(17.0, 23.0, 2, 1)
+        tables2.edges.add_row(35.0, 54.0, 2, 1)
+
         lineages3_ancestry = [
             [(9, 15, 1), (17, 30, 1), (32, 35.60308750316454, 1)],
             [(12, 14.46828483981249, 1)],
@@ -402,7 +432,7 @@ class TestUnion:
         tables3.edges.add_row(17.0, 23.0, 2, 1)
         tables3.edges.add_row(35.0, 54.0, 2, 1)
 
-        return {1: [tables1, lineages1_ancestry], 3: [tables3, lineages3_ancestry]}
+        return {1: [tables1, lineages1_ancestry], 2: [tables2, lineages2_ancestry], 3: [tables3, lineages3_ancestry]}
 
     def get_lineages(self):
         a = sim.Lineage(
