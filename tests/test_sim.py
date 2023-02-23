@@ -342,6 +342,69 @@ class TestIntersection:
             for tree in ts.trees():
                 assert tree.num_roots == 1
 
+class TestSegmentTracker:
+    
+    def verify_chain(self, chain, breakpoints, ancestral_to, bp_flags):
+        segment = chain
+        Sbps = set()
+        assert len(breakpoints) == ancestral_to.shape[-1]
+        
+        i = 0
+        j = 0
+        while segment is not None:
+            Sbps.add(segment.left)
+            assert np.array_equal(segment.ancestral_to, ancestral_to[:, i])
+            i += 1
+            if segment.left == bp_flags[0, j]:
+                assert segment.is_bp == bp_flags[1, j]
+                j += 1
+            segment = segment.next
+        assert Sbps == breakpoints
+
+    def test_increment_interval(self):
+        L = 100
+        S = sim.SegmentTracker(L)
+        a = [
+            sim.AncestryInterval(10, 20, 2),
+            sim.AncestryInterval(30, 40, 4),
+            sim.AncestryInterval(50, 60, 3),
+            ]
+        b = [
+            sim.AncestryInterval(5, 10, 2),
+            sim.AncestryInterval(12, 18, 3),
+            sim.AncestryInterval(19, 35, 4),
+            sim.AncestryInterval(45, 55, 6),
+            sim.AncestryInterval(60, 100, 2),
+            ]
+        breakpoints = set()
+        breakpoints.add(0)
+
+                #0,5,10,12,18,19,20,30,35,40,45,50,55,60,100
+        ancestral_to = np.array([
+                [0, 0, 2, 2, 2, 2, 0, 4, 4, 0, 0, 3, 3, 0],
+                [0, 2, 0, 3, 0, 4, 4, 4, 0, 0, 6, 6, 0, 2],
+            ], dtype=np.int64)
+        
+        bps = np.array([
+            [10, 30, 50, 5, 12, 19, 45, 60],
+            [0, 0, 0, 1, 1, 1, 1, 1]]
+        )
+        bp_flags = np.random.randint(0, 2, size=bps.shape[-1])
+        bp_count = 0
+        all_bps = bps[:, np.argsort(bps[0])]
+        all_bps[1] = (all_bps[1] + 1) * bp_flags[np.argsort(bps[0])]
+        
+        for i, lin in enumerate([a, b]):
+            for segment in lin:
+                S.increment_interval(segment.left, segment.right, i, bp_flags[bp_count], segment.ancestral_to)
+                breakpoints.add(segment.left)
+                if segment.right != L:
+                    breakpoints.add(segment.right)
+                bp_count += 1
+
+        self.verify_chain(S.chain, breakpoints, ancestral_to, all_bps)
+        
+
 
 class TestUnion:
     def test_process_lineages(self):

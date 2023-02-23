@@ -860,6 +860,7 @@ def collect_ancestral_segments(segment, collect, bound, idx):
 
 
 def generate_breakpoints(interval, rho, t, node_time, rng):
+    # only iterating along single branch -> rho / 2
     total_branch_length = t - node_time
     expected_num_breakpoints = rho / 2 * interval.span * total_branch_length
     num_breakpoints = rng.poisson(expected_num_breakpoints)
@@ -883,10 +884,10 @@ def init_segment_tracker(lineages, rng, rho, t, idxs):
         for segment in lineages[lin_idx].ancestry:
             left = segment.left
             bp_flag = 0
-            for breakpoint in generate_breakpoints(
+            for bp in generate_breakpoints(
                 segment, rho, t, lineages[lin_idx].node_time, rng
             ):
-                right = breakpoint
+                right = bp
                 S.increment_interval(left, right, i, bp_flag, segment.ancestral_to)
                 left = right
                 bp_flag = 1
