@@ -512,6 +512,7 @@ class Simulator:
     rho: float
     seed: int = None
     rec_adj: bool = True
+    union: bool = True
 
     def __post_init__(self):
         self.nodes = []
@@ -571,41 +572,12 @@ class Simulator:
         if self.time > end_time:
             self.time = end_time
         else:
-            overlap, overlap_length = intersect_lineages(
-                self.lineages[a], self.lineages[b]
-            )
-
-            node_times = (self.lineages[a].node_time, self.lineages[b].node_time)
-            coalesced_segment = pick_segment(
-                overlap, self.rho * rec_rate_adj, self.time, node_times, self.rng_numpy
-            )
-            c = Lineage(len(self.nodes), coalesced_segment, self.time)
-            for interval in coalesced_segment:
-                for lineage in self.lineages[a], self.lineages[b]:
-                    self.tables.edges.add_row(
-                        interval.left, interval.right, c.node, lineage.node
-                    )
-
-            self.nodes.append(Node(time=self.time))
-
-            # remove interval from old lineage
-            to_delete = []
-            for lineage_idx in a, b:
-                updated_ancestry = list(
-                    remove_segment(self.lineages[lineage_idx], c.ancestry)
-                )
-                self.lineages[lineage_idx].ancestry = updated_ancestry
-                if len(updated_ancestry) == 0:
-                    to_delete.append(lineage_idx)
-            for lineage_idx in sorted(to_delete, reverse=True):
-                del self.lineages[lineage_idx]
-
-            # filter out intervals that are ancestral to all samples
-            c.ancestry = [
-                segment for segment in c.ancestry if segment.ancestral_to < self.samples
-            ]
-            if len(c.ancestry) > 0:
-                self.lineages.append(c)
+            parent_node = len(self.nodes)
+            self.nodes.append(Node(self.time))
+            if self.union:
+                process_lineage_pair(self.lineages, self.tables, (a, b), parent_node, self.time, self.rng_numpy, self.samples, self.rho * rec_rate_adj)        
+            else:
+                process_lineage_pair_overlap_only(self.lineages, self.tables, (a, b), parent_node, self.time, self.rng_numpy, self.samples, self.rho * rec_rate_adj)
 
     def finalise_tables(self):
         for node in self.nodes:
