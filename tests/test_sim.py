@@ -347,15 +347,12 @@ class TestUnion:
     def test_process_lineages(self):
         expd = self.exp_results()
         #for picked_idx in range(1,4):
-        for picked_idx in [2,]:
+        for picked_idx in range(1,4):
             lineages = self.get_lineages()
             tables = tskit.TableCollection(54)
             tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
             rng = np.random.default_rng(seed=42)
             sim.process_lineage_pair(lineages, tables, [0, 1], 2, 1.0, rng, 3, 0.25, picked_idx)
-            print('num_lineages:', len(lineages))
-            for lin in lineages:
-                print(lin)
             tables.edges.squash()
             tables.assert_equals(
                 expd[picked_idx][0], ignore_metadata=True, ignore_provenance=True

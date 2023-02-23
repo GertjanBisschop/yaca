@@ -458,7 +458,7 @@ def process_lineage_pair_overlap_only(lineages, tables, idxs, parent_node, t, rn
         lineages.append(c)
 
 
-def sim_yaca(n, rho, L, seed=None, verbose=False, union=True):
+def sim_yaca(n, rho, L, seed=None, verbose=False, union=True, rec_adj=True):
     rng = random.Random(seed)
     rng_numpy = np.random.default_rng(seed)
     tables = tskit.TableCollection(L)
@@ -476,8 +476,10 @@ def sim_yaca(n, rho, L, seed=None, verbose=False, union=True):
     
     while not fully_coalesced(lineages, n):
         # draw new event time and sample lineages
-        rec_rate_adj = expected_fraction_observed_rec_events(len(lineages))
-        # rec_rate_adj = 1
+        if rec_adj:
+            rec_rate_adj = expected_fraction_observed_rec_events(len(lineages))
+        else:
+            rec_rate_adj = 1
         (a, b), new_event_time = sample_pairwise_times(
             lineages, rng, t, rho * rec_rate_adj
         )

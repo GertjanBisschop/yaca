@@ -24,6 +24,7 @@ from yaca import sim
 class Test:
     def __init__(self, basedir, cl_name):
         self.basedir = basedir
+        self.name = cl_name
         self.set_output_dir(basedir, cl_name)
 
     def set_output_dir(self, basedir, cl_name):
@@ -44,6 +45,7 @@ class Test:
 
     def _run_tests(self):
         all_results = self._get_tests()
+        print(f"[+] Running: {self.name}.")
         print(f"[+] Collected {len(all_results)} subtest(s).")
         for method in all_results:
             method()
@@ -94,9 +96,9 @@ class Test:
         max_seed = 2**16
         return rng.integers(1, max_seed, size=num_replicates)
 
-    def run_yaca(self, n, rho, L, seeds):
+    def run_yaca(self, n, rho, L, seeds, rec_adj=True):
         for seed in tqdm(seeds, desc="Running yaca"):
-            yield sim.sim_yaca(n, rho, L, seed=seed)
+            yield sim.sim_yaca(n, rho, L, seed=seed, rec_adj=rec_adj)
 
     def run_msprime(self, n, rho, L, seeds, model="hudson"):
         for seed in tqdm(seeds, desc=f"Running {model}"):
@@ -320,16 +322,16 @@ class TestRecombination(Test):
             "marginal_tree_span_yaca_exp",
         )
         exp_total_branch_length = 2 * sum(1 / i for i in range(1, n))
-        num_trees_exp = rng.poisson(
-            exp_total_branch_length * rho / 2 * L, size=num_reps
-        )
-        self.plot_qq(
-            num_trees_yaca,
-            num_trees_exp,
-            "yaca",
-            "exp",
-            "num_trees_yaca_exp",
-        )
+        # num_trees_exp = rng.poisson(
+        #     exp_total_branch_length * rho / 2 * L, size=num_reps
+        # )
+        # self.plot_qq(
+        #     num_trees_yaca,
+        #     num_trees_exp,
+        #     "yaca",
+        #     "exp",
+        #     "num_trees_yaca_exp",
+        # )
 
     def no_test_msp_msp_exact(self):
         rho = 5e-4
@@ -462,6 +464,7 @@ class TestMargTBL(Test):
         ts_iter = self.run_yaca(sample_size, rho, L, seeds)
         # ts_iter = self.run_msprime(sample_size, rho, L, seeds)
         for idx, ts in enumerate(ts_iter):
+            ts = ts.simplify()
             tree_stats[idx] = self.marginal_tree_stats(
                 ts, positions, tree_stats.shape[1:]
             )
@@ -489,39 +492,42 @@ class TestRecAgainstMsp(Test):
 
     """
 
-    def test_num_trees(self, seed=None, test_yaca=True):
+    def test_num_trees(self, seed=None):
         rho = 5e-5
         L = 1e5
         num_reps = 500
+        for rec_adj in True, False:
+            for n in [4, 8, 20]:
+                self.verify_num_trees(n, rho, L, num_reps, seed, rec_adj)
 
-        for n in [4, 8, 20]:
-            self.verify_num_trees(n, rho, L, num_reps, seed, test_yaca)
-
-    def verify_num_trees(self, n, rho, L, num_replicates, seed, test_yaca):
+    def verify_num_trees(self, n, rho, L, num_replicates, seed, rec_adj):
         param_str = f"L_{L}_rho_{rho}_n{n}"
         if seed is None:
             seed = random.randint(1, 2**16)
         seeds = self.get_seeds(num_replicates, seed)
+        
         num_trees_msp_exact = self.msp_exact_num_trees(n, rho, L, num_replicates, seed)
-
-        if test_yaca:
-            model = "yaca"
-            num_trees = self.yaca_num_trees(n, rho, L, seeds)
-            output_str = f"{model}_num_trees_msp_exact_n{n}_with_correction"
-        else:
-            model = "hudson"
-            num_trees = self.msp_num_trees(n, rho, L, num_replicates, model=model)
-            output_str = f"{model}_num_trees_msp_exact_n{n}"
+        num_trees_yaca = self.yaca_num_trees(n, rho, L, seeds, rec_adj)
+        num_trees_msp = self.msp_num_trees(n, rho, L, num_replicates, model='hudson')
+        
+        rec_adj_str = 'rec_adj' if rec_adj else ''
         self.require_output_dir(f"n_{n}/{param_str}")
         self.plot_qq(
-            num_trees,
+            num_trees_yaca,
             num_trees_msp_exact,
-            model,
+            'yaca',
             "msp_exact",
-            f"n_{n}/{param_str}/{output_str}",
+            f"n_{n}/{param_str}/num_trees_exact_{rec_adj_str}",
+        )
+        self.plot_qq(
+            num_trees_yaca,
+            num_trees_msp,
+            'yaca',
+            "msp",
+            f"n_{n}/{param_str}/num_trees_msp_{rec_adj_str}",
         )
         logfile = self._build_filename(
-            f"n_{n}/{param_str}/logfile_{model}", extension=".tsv"
+            f"n_{n}/{param_str}/logfile", extension=".tsv"
         )
         self.log_run(
             logfile,
@@ -535,7 +541,7 @@ class TestRecAgainstMsp(Test):
             ],
         )
 
-    def yaca_num_trees(self, n, rho, L, seeds):
+    def yaca_num_trees(self, n, rho, L, seeds, rec_adj):
         num_replicates = len(seeds)
         tss = self.run_yaca(n, rho, L, seeds)
         result = np.zeros(num_replicates, dtype=np.int64)

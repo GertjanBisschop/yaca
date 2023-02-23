@@ -64,6 +64,7 @@ class TsStatRunner:
         single_run = self._run_yaca() if model == "yaca" else self._run_msprime(model)
         for j, ts in enumerate(single_run):
             for i, stat in enumerate(T):
+                ts = ts.simplify()
                 a[i, j, : stat.size] = stat.compute(ts)
 
     def get_seeds(self):
