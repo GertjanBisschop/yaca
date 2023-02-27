@@ -629,6 +629,7 @@ class Segment:
         self.is_bp = 0
         self.ancestral_to = np.zeros(2, dtype=np.uint64)
         self.internal_bp = False
+        self.idx = -1
 
     @staticmethod
     def show_chain(seg):
@@ -709,12 +710,18 @@ class SegmentTracker:
 
     def count_overlapping_segments(self):
         count = 0
+        overlap = 0
         seg = self.chain
         while seg is not None:
-            if (seg.is_bp > 0) and (np.all(seg.ancestral_to > 0)):
-                count += 1
+            if seg.is_bp > 0:
+                count += overlap
+                overlap = 0
+            if np.all(seg.ancestral_to > 0):
+                overlap = 1
+            seg.idx = count
             seg = seg.next
-        self.overlap_count = count + 1
+
+        self.overlap_count = count + overlap
 
 
 # process a pair of overlapping lineages to generate a coalescence event
@@ -752,10 +759,10 @@ def record_edges(segment, child_node, parent_node, tables, bound, idx, reverse=T
 
 
 def record_coalescence(segment, child_nodes, parent_node, tables, n):
-    # mark the correct segment as starting with an internal breakpoint
     curr_interval = segment
-    overlap_bp = False
-    while not overlap_bp:
+    idx = curr_interval.idx
+
+    while curr_interval.idx == idx:
         sum_ancestral_to = np.sum(curr_interval.ancestral_to)
         overlapping = sum_ancestral_to > curr_interval.ancestral_to[0]
         if sum_ancestral_to < n:
@@ -769,14 +776,11 @@ def record_coalescence(segment, child_nodes, parent_node, tables, n):
                     child_nodes[lin],
                 )
                 curr_interval.ancestral_to[lin] = 0
+        
         curr_interval = curr_interval.next
-        if curr_interval is not None:
-            if curr_interval.is_bp > 0:
-                if overlapping:
-                    overlap_bp = True
-                else:
-                    curr_interval.internal_bp = True
-        else:
+        if curr_interval is None:
+            break
+        elif curr_interval.is_bp > 0:
             break
 
     return curr_interval
@@ -904,15 +908,12 @@ def process_lineage_pair(lineages, tables, idxs, parent_node, t, rng, n, rho, pi
     if picked_idx == -1:
         picked_idx = rng.integers(S.overlap_count)
     # go to picked segment
-    interval_count = 0
     curr_interval = S.chain
-    # move to first overlapping interval
-    while np.any(curr_interval.ancestral_to == 0):
+    # move to first segment witch picked index
+    while curr_interval.idx < picked_idx:
         curr_interval = curr_interval.next
-    # move to overlapping interval picked to coalesce
-    while interval_count < picked_idx:
-        if curr_interval.next.is_bp > 0 and np.all(curr_interval.ancestral_to > 0):
-            interval_count += 1
+    # move to first segment with overlap
+    while np.any(curr_interval.ancestral_to == 0):
         curr_interval = curr_interval.next
     child_nodes = [lineages[idx].node for idx in idxs]
     # register edges on the left of the segment and update ancestral_to

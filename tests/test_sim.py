@@ -389,7 +389,8 @@ class TestSegmentTracker:
             [10, 30, 50, 5, 12, 19, 45, 60],
             [0, 0, 0, 1, 1, 1, 1, 1]]
         )
-        bp_flags = np.random.randint(0, 2, size=bps.shape[-1])
+        rng = np.random.default_rng(seed=40)
+        bp_flags = rng.integers(0, 2, size=bps.shape[-1])
         bp_count = 0
         all_bps = bps[:, np.argsort(bps[0])]
         all_bps[1] = (all_bps[1] + 1) * bp_flags[np.argsort(bps[0])]
@@ -401,15 +402,41 @@ class TestSegmentTracker:
                 if segment.right != L:
                     breakpoints.add(segment.right)
                 bp_count += 1
+        S.count_overlapping_segments()
 
+        #seg = S.chain
+        #while seg is not None:
+        #    print(seg.left, seg.is_bp, seg.idx)
+        #    seg = seg.next
+        #assert False
         self.verify_chain(S.chain, breakpoints, ancestral_to, all_bps)
         
 
 
 class TestUnion:
+    def test_segment_tracker(self):
+        rng = np.random.default_rng(seed=42)
+        lineages = self.get_lineages()
+        
+        S = sim.init_segment_tracker(lineages, rng, 0.25, 1.0, (0, 1))
+        expected = [
+                14.151587519468295,
+                14.46828483981249,
+                29.683090571277827,
+                35.60308750316454
+            ]
+        seg = S.chain
+        idx = seg.idx
+        i = 0
+        while seg is not None:
+            if seg.idx != idx:
+                assert seg.left == expected[i]
+                i += 1
+                idx = seg.idx
+            seg = seg.next
+
     def test_process_lineages(self):
         expd = self.exp_results()
-        #for picked_idx in range(1,4):
         for picked_idx in range(1,4):
             lineages = self.get_lineages()
             tables = tskit.TableCollection(54)
@@ -447,47 +474,40 @@ class TestUnion:
         tables1.edges.add_row(12.0, 14.46828483981249, 2, 1)
 
         lineages2_ancestry = [
-            [(9, 14.151587519468295, 1), (35.60308750316454, 40, 1)],
+            [(9, 14.151587519468295, 1), (29.683090571277827, 30, 1), (32, 40, 1)],
             [(12, 14.46828483981249, 1)],
             [
                 (14.151587519468295, 14.46828483981249, 1),
                 (14.46828483981249, 15, 2),
                 (17, 23, 2),
-                (23, 29.683090571277827, 1),],
-            [
-                (29.683090571277827, 30, 1),
-                (32, 34.96638419386065, 1),],
-            [          
-                (34.96638419386065, 35, 1),
-                (35, 35.60308750316454, 2),
-                (35.60308750316454, 54, 1),
+                (23, 29.683090571277827, 1),
+                (35, 54, 1)
             ],
         ]
 
         tables2 = tskit.TableCollection(54)
         tables2.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
         tables2.edges.add_row(14.151587519468295, 15, 2, 0)
-        tables2.edges.add_row(17, 30, 2, 0)
-        tables2.edges.add_row(32, 35.60308750316454, 2, 0)
+        tables2.edges.add_row(17, 29.683090571277827, 2, 0)
         tables2.edges.add_row(14.46828483981249, 15.0, 2, 1)
         tables2.edges.add_row(17.0, 23.0, 2, 1)
         tables2.edges.add_row(35.0, 54.0, 2, 1)
 
         lineages3_ancestry = [
-            [(9, 15, 1), (17, 30, 1), (32, 35.60308750316454, 1)],
+            [(9, 15, 1), (17, 30, 1), (32, 34.96638419386065, 1), (35.60308750316454, 40.0, 1)],
             [(12, 14.46828483981249, 1)],
             [
                 (14.46828483981249, 15, 1),
                 (17, 23, 1),
-                (35, 35.60308750316454, 1),
-                (35.60308750316454, 40, 2),
-                (40, 54, 1),
+                (34.96638419386065, 35, 1), 
+                (35, 35.60308750316454, 2),
+                (35.60308750316454, 54, 1),
             ],
         ]
 
         tables3 = tskit.TableCollection(54)
         tables3.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
-        tables3.edges.add_row(35.60308750316454, 40.0, 2, 0)
+        tables3.edges.add_row(34.96638419386065, 35.60308750316454, 2, 0)
         tables3.edges.add_row(14.46828483981249, 15.0, 2, 1)
         tables3.edges.add_row(17.0, 23.0, 2, 1)
         tables3.edges.add_row(35.0, 54.0, 2, 1)

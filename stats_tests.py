@@ -55,9 +55,9 @@ class Test:
 
     def plot_qq(self, v1, v2, x_label, y_label, filename, info=""):
         sm.graphics.qqplot(v1)
-        sm.qqplot_2samples(v1, v2, line="45")
-        plt.xlabel(x_label)
-        plt.ylabel(y_label)
+        sm.qqplot_2samples(v1, v2, x_label, y_label, line="45")
+        #plt.xlabel(x_label)
+        #plt.ylabel(y_label)
         plt.title(info)
         f = self._build_filename(filename)
         plt.savefig(f, dpi=72)
