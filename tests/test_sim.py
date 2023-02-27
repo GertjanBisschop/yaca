@@ -3,6 +3,7 @@ import pytest
 import random
 import numpy as np
 import msprime
+import math
 import tskit
 
 import yaca.sim as sim
@@ -333,8 +334,8 @@ class TestExtractLineages:
 
         return ts, lineages, lineages_all
 
-class TestIntersection:
 
+class TestIntersection:
     def test_sim(self):
         seeds = np.random.randint(1, 2**16, 10)
         for seed in seeds:
@@ -342,13 +343,13 @@ class TestIntersection:
             for tree in ts.trees():
                 assert tree.num_roots == 1
 
+
 class TestSegmentTracker:
-    
     def verify_chain(self, chain, breakpoints, ancestral_to, bp_flags):
         segment = chain
         Sbps = set()
         assert len(breakpoints) == ancestral_to.shape[-1]
-        
+
         i = 0
         j = 0
         while segment is not None:
@@ -368,54 +369,88 @@ class TestSegmentTracker:
             sim.AncestryInterval(10, 20, 2),
             sim.AncestryInterval(30, 40, 4),
             sim.AncestryInterval(50, 60, 3),
-            ]
+        ]
         b = [
             sim.AncestryInterval(5, 10, 2),
             sim.AncestryInterval(12, 18, 3),
             sim.AncestryInterval(19, 35, 4),
             sim.AncestryInterval(45, 55, 6),
             sim.AncestryInterval(60, 100, 2),
-            ]
+        ]
         breakpoints = set()
         breakpoints.add(0)
 
-                #0,5,10,12,18,19,20,30,35,40,45,50,55,60,100
-        ancestral_to = np.array([
+        # 0,5,10,12,18,19,20,30,35,40,45,50,55,60,100
+        ancestral_to = np.array(
+            [
                 [0, 0, 2, 2, 2, 2, 0, 4, 4, 0, 0, 3, 3, 0],
                 [0, 2, 0, 3, 0, 4, 4, 4, 0, 0, 6, 6, 0, 2],
-            ], dtype=np.int64)
-        
-        bps = np.array([
-            [10, 30, 50, 5, 12, 19, 45, 60],
-            [0, 0, 0, 1, 1, 1, 1, 1]]
+            ],
+            dtype=np.int64,
         )
-        bp_flags = np.random.randint(0, 2, size=bps.shape[-1])
+
+        bps = np.array([[10, 30, 50, 5, 12, 19, 45, 60], [0, 0, 0, 1, 1, 1, 1, 1]])
+        rng = np.random.default_rng(seed=40)
+        bp_flags = rng.integers(0, 2, size=bps.shape[-1])
         bp_count = 0
         all_bps = bps[:, np.argsort(bps[0])]
         all_bps[1] = (all_bps[1] + 1) * bp_flags[np.argsort(bps[0])]
-        
+
         for i, lin in enumerate([a, b]):
             for segment in lin:
-                S.increment_interval(segment.left, segment.right, i, bp_flags[bp_count], segment.ancestral_to)
+                S.increment_interval(
+                    segment.left,
+                    segment.right,
+                    i,
+                    bp_flags[bp_count],
+                    segment.ancestral_to,
+                )
                 breakpoints.add(segment.left)
                 if segment.right != L:
                     breakpoints.add(segment.right)
                 bp_count += 1
+        S.count_overlapping_segments()
 
+        # seg = S.chain
+        # while seg is not None:
+        #    print(seg.left, seg.is_bp, seg.idx)
+        #    seg = seg.next
+        # assert False
         self.verify_chain(S.chain, breakpoints, ancestral_to, all_bps)
-        
 
 
 class TestUnion:
+    def test_segment_tracker(self):
+        rng = np.random.default_rng(seed=42)
+        lineages = self.get_lineages()
+
+        S = sim.init_segment_tracker(lineages, rng, 0.25, 1.0, (0, 1))
+        expected = [
+            14.151587519468295,
+            14.46828483981249,
+            29.683090571277827,
+            35.60308750316454,
+        ]
+        seg = S.chain
+        idx = seg.idx
+        i = 0
+        while seg is not None:
+            if seg.idx != idx:
+                assert seg.left == expected[i]
+                i += 1
+                idx = seg.idx
+            seg = seg.next
+
     def test_process_lineages(self):
         expd = self.exp_results()
-        #for picked_idx in range(1,4):
-        for picked_idx in range(1,4):
+        for picked_idx in range(1, 4):
             lineages = self.get_lineages()
             tables = tskit.TableCollection(54)
             tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
             rng = np.random.default_rng(seed=42)
-            sim.process_lineage_pair(lineages, tables, [0, 1], 2, 1.0, rng, 3, 0.25, picked_idx)
+            sim.process_lineage_pair(
+                lineages, tables, [0, 1], 2, 1.0, rng, 3, 0.25, picked_idx
+            )
             tables.edges.squash()
             tables.assert_equals(
                 expd[picked_idx][0], ignore_metadata=True, ignore_provenance=True
@@ -430,14 +465,15 @@ class TestUnion:
     def exp_results(self):
 
         lineages1_ancestry = [
-            [(9, 14.151587519468295, 1), (29.683090571277827, 30, 1), (32, 40, 1)],
-            [(14.46828483981249, 15, 1), (17, 23, 1), (35, 54, 1)],
             [
                 (12, 14.151587519468295, 1),
                 (14.151587519468295, 14.46828483981249, 2),
                 (14.46828483981249, 15, 1),
                 (17, 29.683090571277827, 1),
             ],
+            [(9, 14.151587519468295, 1)],
+            [(29.683090571277827, 30, 1), (32, 40, 1)],
+            [(14.46828483981249, 15, 1), (17, 23, 1), (35, 54, 1)],
         ]
 
         tables1 = tskit.TableCollection(54)
@@ -447,52 +483,51 @@ class TestUnion:
         tables1.edges.add_row(12.0, 14.46828483981249, 2, 1)
 
         lineages2_ancestry = [
-            [(9, 14.151587519468295, 1), (35.60308750316454, 40, 1)],
-            [(12, 14.46828483981249, 1)],
             [
                 (14.151587519468295, 14.46828483981249, 1),
                 (14.46828483981249, 15, 2),
                 (17, 23, 2),
-                (23, 29.683090571277827, 1),],
-            [
-                (29.683090571277827, 30, 1),
-                (32, 34.96638419386065, 1),],
-            [          
-                (34.96638419386065, 35, 1),
-                (35, 35.60308750316454, 2),
-                (35.60308750316454, 54, 1),
+                (23, 29.683090571277827, 1),
+                (35, 54, 1),
             ],
+            [(9, 14.151587519468295, 1)],
+            [(29.683090571277827, 30, 1), (32, 40, 1)],
+            [(12, 14.46828483981249, 1)],
         ]
 
         tables2 = tskit.TableCollection(54)
         tables2.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
         tables2.edges.add_row(14.151587519468295, 15, 2, 0)
-        tables2.edges.add_row(17, 30, 2, 0)
-        tables2.edges.add_row(32, 35.60308750316454, 2, 0)
+        tables2.edges.add_row(17, 29.683090571277827, 2, 0)
         tables2.edges.add_row(14.46828483981249, 15.0, 2, 1)
         tables2.edges.add_row(17.0, 23.0, 2, 1)
         tables2.edges.add_row(35.0, 54.0, 2, 1)
 
         lineages3_ancestry = [
-            [(9, 15, 1), (17, 30, 1), (32, 35.60308750316454, 1)],
-            [(12, 14.46828483981249, 1)],
             [
                 (14.46828483981249, 15, 1),
                 (17, 23, 1),
-                (35, 35.60308750316454, 1),
-                (35.60308750316454, 40, 2),
-                (40, 54, 1),
+                (34.96638419386065, 35, 1),
+                (35, 35.60308750316454, 2),
+                (35.60308750316454, 54, 1),
             ],
+            [(9, 15, 1), (17, 30, 1), (32, 34.96638419386065, 1)],
+            [(35.60308750316454, 40.0, 1)],
+            [(12, 14.46828483981249, 1)],
         ]
 
         tables3 = tskit.TableCollection(54)
         tables3.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
-        tables3.edges.add_row(35.60308750316454, 40.0, 2, 0)
+        tables3.edges.add_row(34.96638419386065, 35.60308750316454, 2, 0)
         tables3.edges.add_row(14.46828483981249, 15.0, 2, 1)
         tables3.edges.add_row(17.0, 23.0, 2, 1)
         tables3.edges.add_row(35.0, 54.0, 2, 1)
 
-        return {1: [tables1, lineages1_ancestry], 2: [tables2, lineages2_ancestry], 3: [tables3, lineages3_ancestry]}
+        return {
+            1: [tables1, lineages1_ancestry],
+            2: [tables2, lineages2_ancestry],
+            3: [tables3, lineages3_ancestry],
+        }
 
     def get_lineages(self):
         a = sim.Lineage(
@@ -516,9 +551,233 @@ class TestUnion:
 
         return [a, b]
 
+    def test_predefined(self):
+        S = self.get_S()
+        S.count_overlapping_segments()
+        assert S.overlap_count == 4
+        
+        tables = tskit.TableCollection(S.L)
+        tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
+        test_tables = tables.copy()
+        picked_idx = 3
+        child_nodes = [0, 1]
+        idxs = [0, 1]
+        lineages = [
+            sim.Lineage(0, [sim.AncestryInterval(5, 55, 1)], 1.0),
+            sim.Lineage(1, [sim.AncestryInterval(20, 60, 1)], 0.5)
+        ]
+        parent_node = 2
+
+        curr_interval = S.chain 
+        while curr_interval.idx < picked_idx:
+            curr_interval = curr_interval.next
+        # move to first segment with overlap
+        while np.any(curr_interval.ancestral_to == 0):
+            curr_interval = curr_interval.next
+        assert curr_interval.idx == picked_idx
+
+        for i, lin in enumerate(idxs):
+            bound = lineages[lin].left
+            sim.record_edges(
+                curr_interval, child_nodes[i], parent_node, tables, bound, i, reverse=True
+            )
+        
+        test_tables.edges.add_row(43, 50, 2, 0)
+        test_tables.edges.add_row(37, 38, 2, 1)
+        assert test_tables.equals(tables, ignore_metadata=True, ignore_provenance=True)
+        
+        seg = S.chain
+        while seg is not None:
+            if seg.left in set((43, 37)):
+                assert seg.internal_bp == True
+            else:
+                assert seg.internal_bp == False
+            seg = seg.next
+        
+        curr_interval = sim.record_coalescence(
+            curr_interval, child_nodes, parent_node, tables, 3
+        )
+        test_tables.edges.add_row(50, 55, 2, 0)
+        test_tables.edges.add_row(50, 55, 2, 1)
+        test_tables.edges.add_row(55, 57, 2, 1)
+        assert test_tables.equals(tables, ignore_metadata=True, ignore_provenance=True)        
+        seg = S.chain
+        while seg is not None:
+            if seg.left == 50:
+                assert seg.mark == 2
+                assert np.sum(seg.ancestral_to) == 0
+            else:
+                assert seg.mark <= 1
+            seg = seg.next
+        
+        for i, lin in enumerate(idxs):
+            bound = lineages[lin].right
+            last_interval = sim.record_edges(
+                curr_interval, child_nodes[i], parent_node, tables, bound, i, reverse=False
+            )
+        assert test_tables.equals(tables, ignore_metadata=True, ignore_provenance=True)        
+        assert last_interval.internal_bp == True
+        
+        new_lineages = []
+        ret = sim.collect_marked_segments(S.chain, new_lineages)
+        if ret > 0:
+            for lineage in new_lineages:
+                lineages.append(sim.Lineage(parent_node, lineage, 1.5))
+        assert len(new_lineages) == 1
+        assert len(new_lineages[0]) == 4
+    
+        for idx, lin in enumerate(idxs):
+            collect = []
+            ret = sim.collect_ancestral_segments(S.chain, collect, lineages[lin].right, idx)
+            if ret > 0:
+                for ancestry in collect:
+                    lin_copy = lineages[lin].copy()
+                    lin_copy.ancestry = ancestry
+                    lineages.append(lin_copy)        
+        for idx in sorted(idxs, reverse=True):
+            del lineages[idx]
+        
+        assert len(lineages) == 4
+
+    def get_S(self):
+        S = sim.SegmentTracker(60)
+        S.chain.left = 5
+
+        segments = [
+            (5, 25, 0, 0), 
+            (25, 30, 0, 1),
+            (40, 43, 0, 0),
+            (43, 55, 0, 1),
+            (20, 22, 1, 0),
+            (22, 32, 1, 1),
+            (32, 35, 1, 1),
+            (36, 37, 1, 0),
+            (37, 38, 1, 1),
+            (50, 57, 1, 0),
+            (57, 60, 1, 1)
+        ]
+        for seg in segments:
+            S.increment_interval(*seg, 1)
+        return S
+
+    def verify_sim_step(self, s):
+        S = OverlapCounter(s.sequence_length)
+        for idx, lineage in enumerate(s.lineages):
+            for seg in lineage.ancestry:
+                S.increment_interval(seg.left, seg.right, seg.ancestral_to)
+        seg = S.overlaps
+        while seg is not None:
+            print(seg.node)
+            assert seg.node == s.samples or seg.node == 0
+            seg = seg.next
+
+    def test_sim_stepwise(self):
+        seeds = np.random.randint(1, 2**16, 10)
+        for seed in seeds:
+            print(seed)
+            s = sim.Simulator(4, 0.1, 100, seed=seed)
+            while not sim.fully_coalesced(s.lineages, s.samples):
+                s._step(math.inf)
+                self.verify_sim_step(s)
+
     def test_sim(self):
         seeds = np.random.randint(1, 2**16, 100)
         for seed in seeds:
             ts = sim.sim_yaca(4, 0.1, 100, seed=seed, verbose=True, union=True)
             for tree in ts.trees():
                 assert tree.num_roots == 1
+
+class Segment:
+    """
+    A class representing a single segment. Each segment has a left
+    and right, denoting the loci over which it spans, a node and a
+    next, giving the next in the chain.
+    """
+
+    def __init__(self, index):
+        self.left = None
+        self.right = None
+        self.node = None
+        self.prev = None
+        self.next = None
+        self.population = None
+        self.label = 0
+        self.index = index
+
+    def __repr__(self):
+        return repr((self.left, self.right, self.node))
+
+    @staticmethod
+    def show_chain(seg):
+        s = ""
+        while seg is not None:
+            s += f"[{seg.left}, {seg.right}: {seg.node}], "
+            seg = seg.next
+        return s[:-2]
+
+    def __lt__(self, other):
+        return (self.left, self.right, self.population, self.node) < (
+            other.left,
+            other.right,
+            other.population,
+            self.node,
+        )
+
+class OverlapCounter:
+    def __init__(self, seq_length):
+        self.seq_length = seq_length
+        self.overlaps = self._make_segment(0, seq_length, 0)
+
+    def overlaps_at(self, pos):
+        assert 0 <= pos < self.seq_length
+        curr_interval = self.overlaps
+        while curr_interval is not None:
+            if curr_interval.left <= pos < curr_interval.right:
+                return curr_interval.node
+            curr_interval = curr_interval.next
+        raise ValueError("Bad overlap count chain")
+
+    def increment_interval(self, left, right, ancestral_to):
+        """
+        Increment the count that spans the interval
+        [left, right), creating additional intervals in overlaps
+        if necessary.
+        """
+        curr_interval = self.overlaps
+        while left < right:
+            if curr_interval.left == left:
+                if curr_interval.right <= right:
+                    curr_interval.node += ancestral_to
+                    left = curr_interval.right
+                    curr_interval = curr_interval.next
+                else:
+                    self._split(curr_interval, right)
+                    curr_interval.node += ancestral_to
+                    break
+            else:
+                if curr_interval.right <= left:
+                    curr_interval = curr_interval.next
+                else:
+                    self._split(curr_interval, left)
+                    curr_interval = curr_interval.next
+
+    def _split(self, seg, bp):  # noqa: A002
+        """
+        Split the segment at breakpoint and add in another segment
+        from breakpoint to seg.right. Set the original segment's
+        right endpoint to breakpoint
+        """
+        right = self._make_segment(bp, seg.right, seg.node)
+        if seg.next is not None:
+            seg.next.prev = right
+            right.next = seg.next
+        right.prev = seg
+        seg.next = right
+        seg.right = bp
+
+    def _make_segment(self, left, right, count):
+        seg = Segment(0)
+        seg.left = left
+        seg.right = right
+        seg.node = count
+        return seg

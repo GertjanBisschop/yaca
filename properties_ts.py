@@ -586,6 +586,46 @@ class KC(TsStat):
             f = self._build_filename("cdf_")
             plot_cdf(np.squeeze(a[..., i]), self.name, f, self.runner)
 
+class KCDecay(TsStat):
+    def __init__(self, runner):
+        num_points = 20
+        super().__init__(runner, num_points - 1)
+
+    def compute(self, ts):
+        result = np.zeros(self.size, dtype=np.float64)
+        points = np.arange(self.size + 1) / (self.size + 1) * ts.sequence_length
+        first_tree = ts.first(sample_lists=True)
+        for i in range(self.size):
+            tree = ts.at(points[i + 1], sample_lists=True)
+            result[i] = first_tree.kc_distance(tree, 1.0)
+        return result
+
+    def plot_line(self, a, b, x_label, y_label, filename):
+        marker = itertools.cycle((".", "+", "v", "^"))
+        for i, model in enumerate(self.runner.models):
+            x = a[i]
+            plt.plot(
+                b, x, label=model, marker=next(marker), markersize=10, linestyle="None"
+            )
+        plt.xlabel(x_label)
+        plt.ylabel(y_label)
+        plt.legend(loc="upper right")
+        plt.savefig(filename, dpi=72)
+        plt.close("all")
+
+    def plot(self, a):
+        f = self._build_filename("")
+        #shape a: num_models, reps, num_positions
+        mean_a = np.mean(a, axis=1)
+        b = (
+            np.arange(self.size + 1)
+            / self.size + 1
+            * self.runner.sequence_length
+            * self.runner.rho
+            / 2
+        )
+        self.plot_line(mean_a, b[1:], "rho", "kc", f)
+
 
 def plot_qq(v1, v2, x_label, y_label, filename, stat_obj, info=""):
     sm.graphics.qqplot(v1)
@@ -661,6 +701,7 @@ def main():
         "MeanAncMatEdge",
         "NonMarkovian",
         "KC",
+        "KCDecay",
     ]
 
     parser.add_argument(
