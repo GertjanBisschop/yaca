@@ -4,6 +4,7 @@ import itertools
 import msprime
 import msprime._msprime as _msp
 import numpy as np
+import os
 import random
 import scipy
 import tskit
@@ -1166,7 +1167,55 @@ class TestSingleStep(Test):
                     file=logfile,
                 )
 
+class TestPairwiseRate(Test):
 
+    def test_pairwise(self):
+        self._test_single()
+
+    def _test_single(self, seeds=None):
+        n = 10
+        rho = 1e-4
+        L = 1e5
+        num_replicates = 500
+        param_str = f"L_{L}_rho_{rho}"
+        self.require_output_dir(f"n_{n}/{param_str}")
+        if isinstance(seeds, Iterable):
+            num_runs = len(seeds)
+            self.seeds = seeds
+        else:
+            num_runs = 5
+            seeds = self.get_seeds(num_runs)
+        self.set_output_dir(self.output_dir, 'TestPairwiseRate')
+        for run in range(num_runs):
+            rng = np.random.default_rng(seeds[run])
+            results = np.zeros((2, num_replicates), dtype=np.float64)
+            
+            run_seeds = self.get_seeds(num_replicates)
+            ts_iter = self.run_yaca(n, rho, L, run_seeds)
+            for idx, ts in enumerate(ts_iter):
+                pair = rng.integers(0, n, 2)
+                ts = ts.simplify()
+                tree = ts.first()
+                results[0, idx] = tree.tmrca(*pair)
+            run_seeds = self.get_seeds(num_replicates)
+            ts_iter = self.run_msprime(n, rho, L, run_seeds)
+            for idx, ts in enumerate(ts_iter):
+                pair = rng.integers(0, n, 2)
+                ts = ts.simplify()
+                tree = ts.first()
+                results[1, idx] = tree.tmrca(*pair)
+
+            #plot results
+            self.plot_qq(
+                results[0], results[1], "yaca", "msp", f"n_{n}/{param_str}/pairwise_coal_time_qq_{run}"
+            )
+        
+            fig, ax = plt.subplots()
+            ax.violinplot([results[i] for i in range(2)], positions=[0, 1])
+            ax.set_xticks([0,1])
+            ax.set_xticklabels(['yaca', 'msp']);
+            fig.savefig(os.path.join(self.output_dir, f"n_{n}/{param_str}/pairwise_coal_time_n{n}_violin_{run}"), dpi=72)
+        
 def run_tests(suite, output_dir):
     print(f"[+] Test suite contains {len(suite)} tests.")
     for cl_name in suite:
@@ -1183,6 +1232,7 @@ def main():
         "TestSamplingConsistency",
         "TestSingleStep",
         "TestRecombinationVar",
+        "TestPairwiseRate",
     ]
 
     parser.add_argument(
