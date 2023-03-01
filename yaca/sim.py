@@ -678,7 +678,7 @@ class Segment:
         s = ""
         while seg is not None:
             s += (
-                f"[{seg.left} ({seg.is_bp}), {seg.right}: {np.sum(seg.ancestral_to)}], "
+                f"[{seg.left} ({seg.is_bp}), {seg.right}: anc_to: {np.sum(seg.ancestral_to)}, idx: {seg.idx}], "
             )
             seg = seg.next
         return s[:-2]

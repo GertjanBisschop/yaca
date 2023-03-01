@@ -551,6 +551,115 @@ class TestUnion:
 
         return [a, b]
 
+    def test_predefined(self):
+        S = self.get_S()
+        S.count_overlapping_segments()
+        assert S.overlap_count == 4
+        
+        tables = tskit.TableCollection(S.L)
+        tables.nodes.metadata_schema = tskit.MetadataSchema.permissive_json()
+        test_tables = tables.copy()
+        picked_idx = 3
+        child_nodes = [0, 1]
+        idxs = [0, 1]
+        lineages = [
+            sim.Lineage(0, [sim.AncestryInterval(5, 55, 1)], 1.0),
+            sim.Lineage(1, [sim.AncestryInterval(20, 60, 1)], 0.5)
+        ]
+        parent_node = 2
+
+        curr_interval = S.chain 
+        while curr_interval.idx < picked_idx:
+            curr_interval = curr_interval.next
+        # move to first segment with overlap
+        while np.any(curr_interval.ancestral_to == 0):
+            curr_interval = curr_interval.next
+        assert curr_interval.idx == picked_idx
+
+        for i, lin in enumerate(idxs):
+            bound = lineages[lin].left
+            sim.record_edges(
+                curr_interval, child_nodes[i], parent_node, tables, bound, i, reverse=True
+            )
+        
+        test_tables.edges.add_row(43, 50, 2, 0)
+        test_tables.edges.add_row(37, 38, 2, 1)
+        assert test_tables.equals(tables, ignore_metadata=True, ignore_provenance=True)
+        
+        seg = S.chain
+        while seg is not None:
+            if seg.left in set((43, 37)):
+                assert seg.internal_bp == True
+            else:
+                assert seg.internal_bp == False
+            seg = seg.next
+        
+        curr_interval = sim.record_coalescence(
+            curr_interval, child_nodes, parent_node, tables, 3
+        )
+        test_tables.edges.add_row(50, 55, 2, 0)
+        test_tables.edges.add_row(50, 55, 2, 1)
+        test_tables.edges.add_row(55, 57, 2, 1)
+        assert test_tables.equals(tables, ignore_metadata=True, ignore_provenance=True)        
+        seg = S.chain
+        while seg is not None:
+            if seg.left == 50:
+                assert seg.mark == 2
+                assert np.sum(seg.ancestral_to) == 0
+            else:
+                assert seg.mark <= 1
+            seg = seg.next
+        
+        for i, lin in enumerate(idxs):
+            bound = lineages[lin].right
+            last_interval = sim.record_edges(
+                curr_interval, child_nodes[i], parent_node, tables, bound, i, reverse=False
+            )
+        assert test_tables.equals(tables, ignore_metadata=True, ignore_provenance=True)        
+        assert last_interval.internal_bp == True
+        
+        new_lineages = []
+        ret = sim.collect_marked_segments(S.chain, new_lineages)
+        if ret > 0:
+            for lineage in new_lineages:
+                lineages.append(sim.Lineage(parent_node, lineage, 1.5))
+        assert len(new_lineages) == 1
+        assert len(new_lineages[0]) == 4
+    
+        for idx, lin in enumerate(idxs):
+            collect = []
+            ret = sim.collect_ancestral_segments(S.chain, collect, lineages[lin].right, idx)
+            if ret > 0:
+                for ancestry in collect:
+                    lin_copy = lineages[lin].copy()
+                    lin_copy.ancestry = ancestry
+                    lineages.append(lin_copy)        
+        for idx in sorted(idxs, reverse=True):
+            del lineages[idx]
+        
+        assert len(lineages) == 4
+
+    def get_S(self):
+        S = sim.SegmentTracker(60)
+        S.chain.left = 5
+
+        segments = [
+            (5, 25, 0, 0), 
+            (25, 30, 0, 1),
+            (40, 43, 0, 0),
+            (43, 55, 0, 1),
+            (20, 22, 1, 0),
+            (22, 32, 1, 1),
+            (32, 35, 1, 1),
+            (36, 37, 1, 0),
+            (37, 38, 1, 1),
+            (50, 57, 1, 0),
+            (57, 60, 1, 1)
+        ]
+        for seg in segments:
+            S.increment_interval(*seg, 1)
+        return S
+
     def verify_sim_step(self, s):
         S = OverlapCounter(s.sequence_length)
         for idx, lineage in enumerate(s.lineages):
