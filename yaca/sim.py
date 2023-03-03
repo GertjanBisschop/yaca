@@ -464,7 +464,7 @@ def process_lineage_pair_overlap_only(
         lineages.append(c)
 
 
-def sim_yaca(n, rho, L, seed=None, verbose=False, union=True, rec_adj=True):
+def sim_yaca(n, rho, L, seed=None, verbose=False, union=True, rec_adj=False):
     rng = random.Random(seed)
     rng_numpy = np.random.default_rng(seed)
     tables = tskit.TableCollection(L)
