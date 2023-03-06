@@ -16,7 +16,7 @@ def decap_to_overlap(ts, node):
     for tree in ts.trees():
         all_lineages = []
         for root in tree.roots:
-            if tree.num_children(root)==1 and root != node:
+            if tree.num_children(root) == 1 and root != node:
                 root = tree.children(root)[0]
             all_lineages.append(root)
             if root == node:
@@ -47,24 +47,28 @@ def rate_integral(time, T, overlap):
     return time * (t2 * time + t1)
 
 
-def single_step_prob(pairwise_overlap, coalescing, last_event, t, rho, node_times):
+def single_step_prob(
+    pairwise_overlap, coalescing, last_event, delta_t, rho, node_times
+):
     single_event = 1
     mean_intensity = 0
-    pairwise_overlap = {k: v * rho / 2 for k, v in pairwise_overlap.items()}
 
-    
-    for lins in coalescing:
+    for pair in coalescing:
         # in hudson algorithm CA_EVENTS can lead to multiple nodes
         # merging in single event (all on same lineage however)
 
         T = 2 * last_event - sum(node_times[i] for i in pair)
-        single_event += (2 * t + T) * pairwise_overlap[pair]
-    
+        single_event += (2 * delta_t + T) * pairwise_overlap[pair]
     for pair, overlap in pairwise_overlap.items():
         overlap = pairwise_overlap[pair]
-        if overlap > 0:
+        if overlap > 0 or rho == 0:
             T = 2 * last_event - sum(node_times[i] for i in pair)
-            mean_intensity += rate_integral(t, T, overlap)
+            mean_intensity += rate_integral(delta_t, T, overlap)
+    # in case multiple nodes merge in single event, these are all
+    # on same lineage. For these lineages we need to correct
+    # the computed mean intensity.
+    mean_intensity -= (len(coalescing) - 1) * delta_t
+
     assert single_event > 0
     assert mean_intensity > 0
     return np.log(single_event) - mean_intensity
@@ -79,19 +83,21 @@ def log_ts_likelihood(ts, rho):
     t = 0
     last_event = 0
     pairwise_overlap = {
-        pair: sequence_length for pair in itertools.combinations(range(num_samples), 2)
+        pair: sequence_length * rho / 2
+        for pair in itertools.combinations(range(num_samples), 2)
     }
 
     for i in range(num_samples, num_nodes):
         t = tables.nodes[i].time
+        delta_t = t - last_event
         # nodes[i] is the next coalescence event back in time
         # we need a list of all pairs of children of nodes[i]
         decap = ts.decapitate(t)
         updated_pairwise_overlap, coalescing = decap_to_overlap(decap, i)
         p += single_step_prob(
-            pairwise_overlap, coalescing, last_event, t, rho, ts.nodes_time
+            pairwise_overlap, coalescing, last_event, delta_t, rho, ts.nodes_time
         )
-        pairwise_overlap = updated_pairwise_overlap.copy()
+        pairwise_overlap = {k: v * rho / 2 for k, v in updated_pairwise_overlap.items()}
         last_event = t
 
     return p
