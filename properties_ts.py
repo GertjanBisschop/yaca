@@ -207,7 +207,7 @@ class CovDecay(TsStat):
             plt.plot(
                 b, x, label=model, marker=next(marker), markersize=10, linestyle="None"
             )
-        exp = np.array([self.expected_cov(2 * r, "hudson") for r in b])
+        exp = np.array([self.expected_cov(r, "hudson") for r in b])
         plt.plot(b, exp, marker="o", label=f"exp_hudson")
         plt.xlabel(x_label)
         plt.ylabel(y_label)
@@ -223,7 +223,6 @@ class CovDecay(TsStat):
             / self.size
             * self.runner.sequence_length
             * self.runner.rho
-            / 2
         )
         self.plot_line(a, b[1:], "rho", "cov", f)
 
